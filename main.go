@@ -181,6 +181,12 @@ func main() {
 	// 用量异常提醒任务（B105）：当日消耗远超近几日日均时通知用户
 	service.StartUsageAlertTask()
 
+	// 号池健康守卫：某分组渠道全挂立即告警，恢复时告知；自动禁用占比过高提前预警
+	service.StartPoolHealthGuard()
+
+	// 每日战报：每天固定时刻把昨日的请求量、消耗、新增与渠道健康推给 root
+	service.StartDailyReportTask()
+
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()

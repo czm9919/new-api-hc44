@@ -98,7 +98,7 @@ func notifyAdminAlert(ctx context.Context, kind string, subject string, body str
 		return
 	}
 	gopool.Go(func() {
-		sent := notifyAdmins("admin_alert", func(role int, _ dto.UserSetting) bool {
+		sent := notifyAdmins(dto.NotifyTypeAdminAlert, func(role int, _ dto.UserSetting) bool {
 			return role == common.RoleRootUser
 		}, func(_ string) (string, string) {
 			return subject, body
