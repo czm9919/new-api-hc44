@@ -8163,6 +8163,24 @@
     "Official prices have not been synced yet": "官方价还没同步过",
     "Auto-sync every {{interval}}": "自动同步：每 {{interval}}",
     "Auto-sync is off; only the button refreshes it": "自动同步已关闭，只能用按钮手动刷新",
-    "last synced {{age}}": "上次同步 {{age}}"
+    "last synced {{age}}": "上次同步 {{age}}",
+    "User Leaderboard": "用户排行榜",
+    "Ranked by consumption in this period. Usernames are masked; sign in to see your own rank.": "按本周期消耗排名。用户名已打码，登录后可查看自己的名次。",
+    "participants": "参与用户",
+    "My rank": "我的排名",
+    "of {{count}}": "/ 共 {{count}} 人",
+    "My spend": "我的消耗",
+    "Gap to the next rank": "距上一名",
+    "Ahead of {{percent}} of users": "领先 {{percent}} 的用户",
+    "Spend {{amount}} more to take the spot above you": "再消耗 {{amount}} 就能超过上一位",
+    "You are #1 this period — keep it up.": "本周期你是第一名 —— 继续保持。",
+    "Not on the board yet": "暂未上榜",
+    "No consumption in this period yet": "本周期暂无消耗",
+    "No consumption in this period yet — send one request to get on the board.": "本周期还没有消耗 —— 发一次请求就能上榜。",
+    "Sign in to see your rank": "登录查看你的排名",
+    "and this card shows your rank and the gap to the user above you.": "即可看到你的名次与距上一名的差距。",
+    "Usernames are masked. The board is recomputed every minute; only consumption logs count.": "用户名已打码。榜单每分钟刷新一次，仅统计正常消耗日志。",
+    "Unable to load the user leaderboard": "无法加载用户排行榜",
+    "Me": "我"
   }
 }

@@ -148,3 +148,107 @@ func TestGetUserConsumptionRankNilLogDB(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, entries)
 }
+
+func TestGetUserConsumptionSelfRankAndGap(t *testing.T) {
+	now := setupConsumptionRankDB(t)
+	dayAgo := now - 86400
+
+	// 用户 1：1500（两笔），用户 2：3000，用户 3：800
+	insertConsumeLog(t, 1, "alice", 1000, dayAgo)
+	insertConsumeLog(t, 1, "alice", 500, dayAgo+60)
+	insertConsumeLog(t, 2, "bob", 3000, dayAgo)
+	insertConsumeLog(t, 3, "carol", 800, dayAgo)
+
+	start := now - 2*86400
+
+	self, err := GetUserConsumptionSelf(1, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, self.UserId)
+	assert.EqualValues(t, 1500, self.UsedQuota)
+	assert.EqualValues(t, 2, self.RequestCount)
+	// bob(3000) 在我上面 → 第 2 名，追赶目标是 3000
+	assert.Equal(t, 2, self.Rank)
+	assert.EqualValues(t, 3000, self.AheadQuota)
+	assert.EqualValues(t, 3, self.TotalUsers)
+
+	// 榜首没有追赶目标
+	top, err := GetUserConsumptionSelf(2, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, top.Rank)
+	assert.EqualValues(t, 0, top.AheadQuota)
+
+	// 末位：两名在我上面
+	last, err := GetUserConsumptionSelf(3, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, last.Rank)
+	assert.EqualValues(t, 1500, last.AheadQuota)
+}
+
+func TestGetUserConsumptionSelfUnrankedWithoutConsumption(t *testing.T) {
+	now := setupConsumptionRankDB(t)
+	dayAgo := now - 86400
+	insertConsumeLog(t, 2, "bob", 3000, dayAgo)
+
+	// 用户 1 在窗口内没有任何消费日志
+	self, err := GetUserConsumptionSelf(1, now-2*86400, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, self.Rank)
+	assert.EqualValues(t, 0, self.UsedQuota)
+	assert.EqualValues(t, 1, self.TotalUsers)
+
+	// 窗口外有消费也不算：名次仍然是 0
+	insertConsumeLog(t, 1, "alice", 9999, now-10*86400)
+	self, err = GetUserConsumptionSelf(1, now-2*86400, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, self.Rank)
+	assert.EqualValues(t, 0, self.UsedQuota)
+
+	// 非法 userId 直接返回零值，不报错
+	invalid, err := GetUserConsumptionSelf(0, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, invalid.Rank)
+}
+
+func TestGetUserConsumptionSelfSharesRankOnTie(t *testing.T) {
+	now := setupConsumptionRankDB(t)
+	dayAgo := now - 86400
+	insertConsumeLog(t, 1, "alice", 500, dayAgo)
+	insertConsumeLog(t, 2, "bob", 1000, dayAgo)
+	insertConsumeLog(t, 3, "carol", 1000, dayAgo)
+
+	start := now - 2*86400
+
+	// 并列第一：没人严格高于我 → 名次 1，追赶目标 0
+	bob, err := GetUserConsumptionSelf(2, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, bob.Rank)
+	assert.EqualValues(t, 0, bob.AheadQuota)
+
+	carol, err := GetUserConsumptionSelf(3, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, carol.Rank)
+
+	// 第三名（两个并列第一压着我）：名次 3，追赶目标 1000
+	alice, err := GetUserConsumptionSelf(1, start, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, alice.Rank)
+	assert.EqualValues(t, 1000, alice.AheadQuota)
+	assert.EqualValues(t, 3, alice.TotalUsers)
+}
+
+func TestGetUserConsumptionSelfIgnoresExcludedLogTypes(t *testing.T) {
+	now := setupConsumptionRankDB(t)
+	dayAgo := now - 86400
+	insertConsumeLog(t, 2, "bob", 3000, dayAgo)
+	// 用户 1 只有错误日志和 0 额度日志：按榜单口径不构成消耗
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId: 1, Username: "alice", Quota: 5000,
+		Type: LogTypeError, CreatedAt: dayAgo,
+	}).Error)
+	insertConsumeLog(t, 1, "alice", 0, dayAgo)
+
+	self, err := GetUserConsumptionSelf(1, now-2*86400, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, self.Rank)
+	assert.EqualValues(t, 0, self.UsedQuota)
+}

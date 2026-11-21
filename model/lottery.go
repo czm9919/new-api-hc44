@@ -22,7 +22,12 @@ type LotterySpin struct {
 	PrizeName    string `json:"prize_name" gorm:"type:varchar(64);not null"`
 	PrizeType    string `json:"prize_type" gorm:"type:varchar(16);not null"` // quota / none
 	QuotaAwarded int    `json:"quota_awarded" gorm:"not null;default:0"`
-	CreatedAt    int64  `json:"created_at" gorm:"bigint;not null;index"`
+	// Paid 本次是否为付费抽奖（扣了余额）；免费次数与付费次数分开计数，
+	// 但共用同一个 spin_index 序列，避免唯一索引口径分裂。
+	Paid bool `json:"paid" gorm:"not null;default:false;index:idx_lottery_paid"`
+	// QuotaCost 本次实际扣掉的余额（免费抽奖恒为 0），退款与对账都靠它。
+	QuotaCost int   `json:"quota_cost" gorm:"not null;default:0"`
+	CreatedAt int64 `json:"created_at" gorm:"bigint;not null;index"`
 }
 
 func (LotterySpin) TableName() string {
@@ -34,11 +39,20 @@ func LotteryDayKey(t time.Time) string {
 	return t.Format("2006-01-02")
 }
 
-// CountLotterySpinsOnDay 用户某天已抽奖次数。
+// CountLotterySpinsOnDay 用户某天已抽奖次数（免费 + 付费，用于 spin_index 序列）。
 func CountLotterySpinsOnDay(userId int, dayKey string) (int64, error) {
 	var count int64
 	err := DB.Model(&LotterySpin{}).
 		Where("user_id = ? AND day_key = ?", userId, dayKey).
+		Count(&count).Error
+	return count, err
+}
+
+// CountLotteryPaidSpinsOnDay 用户某天已付费抽奖次数（付费每日上限用这个口径）。
+func CountLotteryPaidSpinsOnDay(userId int, dayKey string) (int64, error) {
+	var count int64
+	err := DB.Model(&LotterySpin{}).
+		Where("user_id = ? AND day_key = ? AND paid = ?", userId, dayKey, true).
 		Count(&count).Error
 	return count, err
 }

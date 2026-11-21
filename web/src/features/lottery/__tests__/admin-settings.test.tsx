@@ -33,15 +33,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-vi.mock('@/hooks/use-admin', () => ({ useIsAdmin: () => true }))
-
 import { extractSettingsFieldErrors } from '../api'
 import { LotteryPage } from '../index'
+
+vi.mock('@/hooks/use-admin', () => ({ useIsAdmin: () => true }))
 
 const lotterySettings = {
   enabled: true,
   daily_spins: 3,
   require_qq: true,
+  paid_enabled: false,
+  paid_price: 5000,
+  paid_daily_limit: 5,
   prizes: [
     { id: 'thanks', name: '谢谢参与', type: 'none', quota: 0, weight: 40 },
     {
@@ -66,6 +69,11 @@ const statusPayload = {
   settings: lotterySettings,
   spins_used: 0,
   spins_remaining: 3,
+  paid_spins_used: 0,
+  paid_spins_remaining: 0,
+  quota: 0,
+  paid_quota: 0,
+  paid_affordable: false,
   qq_bound: true,
   qq: '123****89',
 }
@@ -251,6 +259,55 @@ describe('lottery admin settings', () => {
     await waitFor(() =>
       expect(del).toHaveBeenCalledWith('/api/user/lottery/qq/settings')
     )
+  })
+
+  it('blocks enabling paid spins without a price, then saves the paid options', async () => {
+    mockGet()
+    const put = vi.spyOn(api, 'put').mockImplementation(() =>
+      ok({
+        ...lotterySettings,
+        paid_enabled: true,
+        paid_price: 800,
+        paid_daily_limit: 2,
+      })
+    )
+    renderPage()
+
+    await screen.findByLabelText('Prize name 1')
+    // 开关外面包了一层 label，getByLabelText 会同时命中 label 与开关本身，取 role=switch 那个。
+    const paidSwitch = screen
+      .getAllByLabelText('Paid spins enabled')
+      .find((element) => element.getAttribute('role') === 'switch')
+    expect(paidSwitch).toBeTruthy()
+    fireEvent.click(paidSwitch as HTMLElement)
+    fireEvent.change(screen.getByLabelText('Paid price'), {
+      target: { value: '0' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save lottery settings' })
+    )
+
+    expect(
+      await screen.findByText('Paid price must be positive when paid spins are on')
+    ).toBeInTheDocument()
+    expect(put).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Paid price'), {
+      target: { value: '800' },
+    })
+    fireEvent.change(screen.getByLabelText('Paid spins per day'), {
+      target: { value: '2' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save lottery settings' })
+    )
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][1]).toMatchObject({
+      paid_enabled: true,
+      paid_price: 800,
+      paid_daily_limit: 2,
+    })
   })
 
   it('restores defaults through a dedicated endpoint', async () => {

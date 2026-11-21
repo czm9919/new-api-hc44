@@ -138,6 +138,59 @@ export type RankingsSnapshot = {
 }
 
 // ----------------------------------------------------------------------------
+// User consumption leaderboard (hc47)
+// ----------------------------------------------------------------------------
+//
+// 给用户自己看的消费榜：用户名一律由后端打码，只暴露额度 / 请求数 / 名次。
+// `is_self` 标记当前登录用户所在那一行，前端据此高亮并显示「我」。
+// `self` 只有登录时才下发，匿名访问为 undefined。
+
+export type UserRankingEntry = {
+  rank: number
+  user_id: number
+  /** 后端已打码的用户名（保留首尾字符）。 */
+  username: string
+  used_quota: number
+  request_count: number
+  /** 占全站窗口消耗的比例（0..1）。 */
+  quota_share: number
+  is_self: boolean
+}
+
+export type UserRankingTotals = {
+  used_quota: number
+  request_count: number
+  user_count: number
+}
+
+export type UserRankingSelf = {
+  /** false 表示本周期没有消耗（不构成上榜），此时 rank = 0。 */
+  ranked: boolean
+  rank: number
+  used_quota: number
+  request_count: number
+  /** 上一名的消耗；rank = 1 时为 0。 */
+  ahead_quota: number
+  /** 落后上一名多少额度；rank = 1 时为 0。 */
+  gap_to_ahead: number
+  /** 本周期有消耗的用户总数。 */
+  total_users: number
+  /** 超过了多少比例的用户（0..1）。 */
+  percentile: number
+}
+
+export type UserRankingSnapshot = {
+  period: RankingPeriod
+  start_ts: number
+  /** 0 表示该侧不设上限（含刚刚产生的消耗）。 */
+  end_ts: number
+  leaderboard: UserRankingEntry[]
+  totals: UserRankingTotals
+  self?: UserRankingSelf
+  generated_at: number
+}
+
+// ----------------------------------------------------------------------------
 // Price leaderboard (hc41)
 // ----------------------------------------------------------------------------
 //

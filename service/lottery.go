@@ -30,9 +30,19 @@ const (
 	LotteryPrizesOptionKey = "lottery_prizes"
 	// LotteryRequireQQOptionKey 抽奖是否要求绑定 QQ。
 	LotteryRequireQQOptionKey = "lottery_require_qq"
+	// LotteryPaidEnabledOptionKey 付费抽奖开关（免费次数用完后可用余额继续抽）。
+	LotteryPaidEnabledOptionKey = "lottery_paid_enabled"
+	// LotteryPaidPriceOptionKey 单次付费抽奖价格（额度）。
+	LotteryPaidPriceOptionKey = "lottery_paid_price"
+	// LotteryPaidDailyLimitOptionKey 每日付费抽奖次数上限。
+	LotteryPaidDailyLimitOptionKey = "lottery_paid_daily_limit"
 
 	// LotteryMaxDailySpins 每日次数上限（防止运营配出天文数字）。
 	LotteryMaxDailySpins = 50
+	// LotteryMaxPaidDailyLimit 每日付费次数上限（比免费宽松一档，仍要有天花板）。
+	LotteryMaxPaidDailyLimit = 200
+	// LotteryMaxPaidPrice 单次付费抽奖价格上限（防止手抖多打几个 0 把用户余额掏空）。
+	LotteryMaxPaidPrice = 1000000
 	// LotteryMaxWheelPrizes 奖池最多奖品数（前端转盘扇区可读性上限）。
 	LotteryMaxWheelPrizes = 12
 
@@ -68,6 +78,13 @@ type LotterySettings struct {
 	DailySpins int            `json:"daily_spins"`
 	RequireQQ  bool           `json:"require_qq"`
 	Prizes     []LotteryPrize `json:"prizes"`
+
+	// PaidEnabled 付费抽奖总开关。默认关闭：运营显式打开才会向用户收费。
+	PaidEnabled bool `json:"paid_enabled"`
+	// PaidPrice 单次付费抽奖价格（额度，只扣付费余额，不动免费额度）。
+	PaidPrice int `json:"paid_price"`
+	// PaidDailyLimit 每日付费抽奖次数上限，与免费次数分开计算。
+	PaidDailyLimit int `json:"paid_daily_limit"`
 }
 
 // DefaultLotteryPrizes 默认奖池：权重合计 95，头奖约 2%。
@@ -85,10 +102,13 @@ func DefaultLotteryPrizes() []LotteryPrize {
 
 func defaultLotterySettings() LotterySettings {
 	return LotterySettings{
-		Enabled:    true,
-		DailySpins: 1,
-		RequireQQ:  true,
-		Prizes:     DefaultLotteryPrizes(),
+		Enabled:        true,
+		DailySpins:     1,
+		RequireQQ:      true,
+		Prizes:         DefaultLotteryPrizes(),
+		PaidEnabled:    false,
+		PaidPrice:      5000,
+		PaidDailyLimit: 5,
 	}
 }
 
@@ -218,6 +238,33 @@ func ValidateLotterySettings(settings LotterySettings) error {
 			Message: fmt.Sprintf("每日次数需在 0 到 %d 之间", LotteryMaxDailySpins),
 		})
 	}
+	if settings.PaidPrice < 0 || settings.PaidPrice > LotteryMaxPaidPrice {
+		fields = append(fields, LotterySettingsFieldError{
+			Field:   "paid_price",
+			Message: fmt.Sprintf("单次价格需在 0 到 %d 之间", LotteryMaxPaidPrice),
+		})
+	}
+	if settings.PaidDailyLimit < 0 || settings.PaidDailyLimit > LotteryMaxPaidDailyLimit {
+		fields = append(fields, LotterySettingsFieldError{
+			Field:   "paid_daily_limit",
+			Message: fmt.Sprintf("每日付费次数需在 0 到 %d 之间", LotteryMaxPaidDailyLimit),
+		})
+	}
+	if settings.PaidEnabled {
+		// 开关打开时价格必须为正、次数必须为正，否则用户点付费抽奖只会得到报错。
+		if settings.PaidPrice <= 0 {
+			fields = append(fields, LotterySettingsFieldError{
+				Field:   "paid_price",
+				Message: "开启付费抽奖时必须设置大于 0 的单次价格",
+			})
+		}
+		if settings.PaidDailyLimit <= 0 {
+			fields = append(fields, LotterySettingsFieldError{
+				Field:   "paid_daily_limit",
+				Message: "开启付费抽奖时每日付费次数必须大于 0",
+			})
+		}
+	}
 	if len(settings.Prizes) == 0 {
 		fields = append(fields, LotterySettingsFieldError{
 			Field:   "prizes",
@@ -319,6 +366,31 @@ func GetLotterySettings() LotterySettings {
 			s.DailySpins = n
 		}
 	}
+	if v, err := model.GetOptionValue(LotteryPaidEnabledOptionKey); err == nil && strings.TrimSpace(v) != "" {
+		s.PaidEnabled = strings.EqualFold(strings.TrimSpace(v), "true")
+	}
+	if v, err := model.GetOptionValue(LotteryPaidPriceOptionKey); err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
+			if n < 0 {
+				n = 0
+			}
+			if n > LotteryMaxPaidPrice {
+				n = LotteryMaxPaidPrice
+			}
+			s.PaidPrice = n
+		}
+	}
+	if v, err := model.GetOptionValue(LotteryPaidDailyLimitOptionKey); err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
+			if n < 0 {
+				n = 0
+			}
+			if n > LotteryMaxPaidDailyLimit {
+				n = LotteryMaxPaidDailyLimit
+			}
+			s.PaidDailyLimit = n
+		}
+	}
 	if v, err := model.GetOptionValue(LotteryPrizesOptionKey); err == nil && strings.TrimSpace(v) != "" {
 		var prizes []LotteryPrize
 		if perr := json.Unmarshal([]byte(v), &prizes); perr == nil {
@@ -362,17 +434,36 @@ var (
 	ErrLotteryDisabled = errors.New("lottery is not enabled")
 	// ErrLotteryQQRequired 未绑定 QQ。
 	ErrLotteryQQRequired = errors.New("bind a QQ account before spinning")
-	// ErrLotteryNoSpinsLeft 今日次数用尽。
+	// ErrLotteryNoSpinsLeft 今日免费次数用尽。
 	ErrLotteryNoSpinsLeft = errors.New("no spins left today")
+	// ErrLotteryPaidDisabled 站点未开放付费抽奖。
+	ErrLotteryPaidDisabled = errors.New("paid lottery is not enabled")
+	// ErrLotteryPaidNoSpinsLeft 今日付费抽奖次数用尽。
+	ErrLotteryPaidNoSpinsLeft = errors.New("no paid spins left today")
+	// ErrLotteryInsufficientQuota 付费余额不足，无法付费抽奖。
+	ErrLotteryInsufficientQuota = errors.New("insufficient paid quota for lottery")
 )
 
 // LotteryStatus 用户侧的抽奖状态。
+//
+// 免费与付费两条通道分开计数：付费抽奖不占用免费次数，免费次数也不会
+// 因为付费抽奖被消耗（用户点「付费」就是明确要用余额）。
 type LotteryStatus struct {
-	Settings       LotterySettings `json:"settings"`
-	SpinsUsed      int             `json:"spins_used"`
-	SpinsRemaining int             `json:"spins_remaining"`
-	QQBound        bool            `json:"qq_bound"`
-	QQ             string          `json:"qq"`
+	Settings LotterySettings `json:"settings"`
+	// SpinsUsed / SpinsRemaining 今日免费次数口径。
+	SpinsUsed      int `json:"spins_used"`
+	SpinsRemaining int `json:"spins_remaining"`
+	// PaidSpinsUsed / PaidSpinsRemaining 今日付费次数口径。
+	PaidSpinsUsed      int `json:"paid_spins_used"`
+	PaidSpinsRemaining int `json:"paid_spins_remaining"`
+	// Quota 工作余额（含免费部分）；PaidQuota 仅付费余额（quota - free_quota）。
+	Quota int `json:"quota"`
+	// PaidQuota 付费余额，付费抽奖只认这个数。
+	PaidQuota int `json:"paid_quota"`
+	// PaidAffordable 现在能不能付费抽一次（前端据此禁用按钮，不用自己算）。
+	PaidAffordable bool   `json:"paid_affordable"`
+	QQBound        bool   `json:"qq_bound"`
+	QQ             string `json:"qq"`
 }
 
 // MaskQQ 展示用脱敏：保留前 3 后 2。
@@ -384,11 +475,32 @@ func MaskQQ(qq string) string {
 	return string(runes[:3]) + strings.Repeat("*", len(runes)-5) + string(runes[len(runes)-2:])
 }
 
-// GetLotteryStatus 汇总开关、剩余次数与 QQ 绑定状态。
+// countLotterySpinsToday 返回今日（总次数, 付费次数）。免费次数 = 总 - 付费。
+func countLotterySpinsToday(userId int) (int, int, error) {
+	dayKey := model.LotteryDayKey(time.Now())
+	rawTotal, err := model.CountLotterySpinsOnDay(userId, dayKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	rawPaid, err := model.CountLotteryPaidSpinsOnDay(userId, dayKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int(rawTotal), int(rawPaid), nil
+}
+
+// clampNonNegative 小工具：次数相减可能为负（历史数据口径变化时）。
+func clampNonNegative(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// GetLotteryStatus 汇总开关、剩余次数（免费/付费）、余额与 QQ 绑定状态。
 func GetLotteryStatus(userId int) (*LotteryStatus, error) {
 	settings := GetLotterySettings()
-	dayKey := model.LotteryDayKey(time.Now())
-	used, err := model.CountLotterySpinsOnDay(userId, dayKey)
+	total, paidUsed, err := countLotterySpinsToday(userId)
 	if err != nil {
 		return nil, err
 	}
@@ -396,16 +508,30 @@ func GetLotteryStatus(userId int) (*LotteryStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	remaining := settings.DailySpins - int(used)
-	if remaining < 0 {
-		remaining = 0
+	quota, err := model.GetUserQuota(userId, true)
+	if err != nil {
+		return nil, err
 	}
+	freeQuota, err := model.GetUserFreeQuota(userId)
+	if err != nil {
+		return nil, err
+	}
+	freeUsed := clampNonNegative(total - paidUsed)
+	paidQuota := clampNonNegative(quota - freeQuota)
+	paidRemaining := clampNonNegative(settings.PaidDailyLimit - paidUsed)
+	paidAffordable := settings.PaidEnabled && settings.PaidPrice > 0 &&
+		paidRemaining > 0 && paidQuota >= settings.PaidPrice
 	return &LotteryStatus{
-		Settings:       settings,
-		SpinsUsed:      int(used),
-		SpinsRemaining: remaining,
-		QQBound:        strings.TrimSpace(qq) != "",
-		QQ:             MaskQQ(strings.TrimSpace(qq)),
+		Settings:           settings,
+		SpinsUsed:          freeUsed,
+		SpinsRemaining:     clampNonNegative(settings.DailySpins - freeUsed),
+		PaidSpinsUsed:      paidUsed,
+		PaidSpinsRemaining: paidRemaining,
+		Quota:              quota,
+		PaidQuota:          paidQuota,
+		PaidAffordable:     paidAffordable,
+		QQBound:            strings.TrimSpace(qq) != "",
+		QQ:                 MaskQQ(strings.TrimSpace(qq)),
 	}, nil
 }
 
@@ -416,16 +542,33 @@ type LotterySpinResult struct {
 	QuotaAwarded   int                `json:"quota_awarded"`
 	SpinsUsed      int                `json:"spins_used"`
 	SpinsRemaining int                `json:"spins_remaining"`
-	Spin           *model.LotterySpin `json:"spin"`
+	PaidSpinsUsed  int                `json:"paid_spins_used"`
+	PaidSpinsLeft  int                `json:"paid_spins_remaining"`
+	// Paid 本次是否付费抽奖；QuotaCost 本次花费（免费为 0）。
+	Paid      bool               `json:"paid"`
+	QuotaCost int                `json:"quota_cost"`
+	Spin      *model.LotterySpin `json:"spin"`
 }
 
-// SpinLottery 执行一次抽奖。daily 次数、QQ 门禁、发奖都在这里判定。
-func SpinLottery(userId int) (*LotterySpinResult, error) {
+// SpinLottery 执行一次抽奖。paid=true 走付费通道。
+//
+// 付费通道的顺序是「先扣费 → 再抽奖 → 失败退款」：
+//   - 扣费用 TryReserveUserQuotaUseFree(useFree=false)，条件更新保证余额不足
+//     直接拒绝，绝不会像裸 decreaseUserQuota 那样把余额扣成负数；
+//   - 只扣付费余额（quota - free_quota），免费额度是给免费模型的，不能拿来抽奖；
+//   - 抽奖记录没落库就失败时原样退款，避免用户白花钱；
+//   - 记录已落库但发奖失败时**不退款**（否则等于「有中奖记录又退钱」双花），
+//     错误上抛，运营按记录里的 quota_cost 对账补偿。
+func SpinLottery(userId int, paid bool) (*LotterySpinResult, error) {
 	settings := GetLotterySettings()
 	if !settings.Enabled {
 		return nil, ErrLotteryDisabled
 	}
-	if settings.DailySpins <= 0 {
+	if paid {
+		if !settings.PaidEnabled || settings.PaidPrice <= 0 || settings.PaidDailyLimit <= 0 {
+			return nil, ErrLotteryPaidDisabled
+		}
+	} else if settings.DailySpins <= 0 {
 		return nil, ErrLotteryNoSpinsLeft
 	}
 	if settings.RequireQQ {
@@ -438,63 +581,116 @@ func SpinLottery(userId int) (*LotterySpinResult, error) {
 		}
 	}
 
+	charged := 0
+	if paid {
+		ok, err := model.TryReserveUserQuotaUseFree(userId, settings.PaidPrice, false)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrLotteryInsufficientQuota
+		}
+		charged = settings.PaidPrice
+	}
+
+	result, recorded, err := spinLotteryAttempts(userId, settings, paid, charged)
+	if err != nil {
+		if charged > 0 && !recorded {
+			if refundErr := model.IncreaseUserQuota(userId, charged, true); refundErr != nil {
+				return nil, fmt.Errorf(
+					"lottery charge refund failed (user=%d quota=%d): %w", userId, charged, refundErr)
+			}
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+// spinLotteryAttempts 落库 + 发奖，第二个返回值表示「记录是否已落库」。
+// 唯一索引冲突时重取次数重试：并发的另一个请求刚占了下标。
+func spinLotteryAttempts(userId int, settings LotterySettings, paid bool, cost int) (*LotterySpinResult, bool, error) {
 	now := time.Now()
 	dayKey := model.LotteryDayKey(now)
 
-	// 唯一索引冲突时重取次数重试一次：并发的另一个请求刚占了下标。
 	for attempt := 0; attempt < 3; attempt++ {
-		used, err := model.CountLotterySpinsOnDay(userId, dayKey)
+		total, paidUsed, err := countLotterySpinsToday(userId)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if int(used) >= settings.DailySpins {
-			return nil, ErrLotteryNoSpinsLeft
+		freeUsed := clampNonNegative(total - paidUsed)
+		if paid {
+			if paidUsed >= settings.PaidDailyLimit {
+				return nil, false, ErrLotteryPaidNoSpinsLeft
+			}
+		} else if freeUsed >= settings.DailySpins {
+			return nil, false, ErrLotteryNoSpinsLeft
 		}
+
 		prize, idx, err := pickLotteryPrizeWithIndex(settings.Prizes)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		spin := &model.LotterySpin{
-			UserId:       userId,
-			DayKey:       dayKey,
-			SpinIndex:    int(used),
+			UserId: userId,
+			DayKey: dayKey,
+			// spin_index 用「今日总次数」（免费+付费）而不是分通道计数：
+			// 唯一索引 (user_id, day_key, spin_index) 才能同时兜住两条通道的并发。
+			SpinIndex:    total,
 			PrizeId:      prize.Id,
 			PrizeName:    prize.Name,
 			PrizeType:    prize.Type,
 			QuotaAwarded: prize.Quota,
+			Paid:         paid,
+			QuotaCost:    cost,
 			CreatedAt:    now.Unix(),
 		}
 		if err := model.CreateLotterySpin(spin); err != nil {
 			if errors.Is(err, model.ErrLotterySpinConflict) {
 				continue
 			}
-			return nil, err
+			return nil, false, err
 		}
 
 		awarded := 0
 		if prize.Type == LotteryPrizeTypeQuota && prize.Quota > 0 {
 			if err := model.IncreaseUserFreeQuota(userId, prize.Quota); err != nil {
-				// 记录已落库、额度发放失败：不静默吞掉，返回错误让用户重试，
-				// 运维可从日志定位（重复抽奖会受次数上限保护）。
-				return nil, fmt.Errorf("prize recorded but quota grant failed: %w", err)
+				// 记录已落库：不再退款，避免同一笔抽奖既留记录又退钱。
+				return nil, true, fmt.Errorf("prize recorded but quota grant failed: %w", err)
 			}
 			awarded = prize.Quota
 		}
 
-		remaining := settings.DailySpins - int(used) - 1
-		if remaining < 0 {
-			remaining = 0
+		freeRemaining := clampNonNegative(settings.DailySpins - freeUsed)
+		paidRemaining := clampNonNegative(settings.PaidDailyLimit - paidUsed)
+		if paid {
+			paidRemaining = clampNonNegative(paidRemaining - 1)
+		} else {
+			freeRemaining = clampNonNegative(freeRemaining - 1)
 		}
 		return &LotterySpinResult{
 			Prize:          prize,
 			PrizeIndex:     idx,
 			QuotaAwarded:   awarded,
-			SpinsUsed:      int(used) + 1,
-			SpinsRemaining: remaining,
+			SpinsUsed:      freeUsed + boolToInt(!paid),
+			SpinsRemaining: freeRemaining,
+			PaidSpinsUsed:  paidUsed + boolToInt(paid),
+			PaidSpinsLeft:  paidRemaining,
+			Paid:           paid,
+			QuotaCost:      cost,
 			Spin:           spin,
-		}, nil
+		}, true, nil
 	}
-	return nil, ErrLotteryNoSpinsLeft
+	if paid {
+		return nil, false, ErrLotteryPaidNoSpinsLeft
+	}
+	return nil, false, ErrLotteryNoSpinsLeft
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func pickLotteryPrizeWithIndex(prizes []LotteryPrize) (LotteryPrize, int, error) {
@@ -534,10 +730,13 @@ func SaveLotterySettings(settings LotterySettings) (LotterySettings, error) {
 		return LotterySettings{}, err
 	}
 	if err := model.UpdateOptionsBulk(map[string]string{
-		LotteryEnabledOptionKey:    strconv.FormatBool(settings.Enabled),
-		LotteryDailySpinsOptionKey: strconv.Itoa(settings.DailySpins),
-		LotteryRequireQQOptionKey:  strconv.FormatBool(settings.RequireQQ),
-		LotteryPrizesOptionKey:     string(encoded),
+		LotteryEnabledOptionKey:        strconv.FormatBool(settings.Enabled),
+		LotteryDailySpinsOptionKey:     strconv.Itoa(settings.DailySpins),
+		LotteryRequireQQOptionKey:      strconv.FormatBool(settings.RequireQQ),
+		LotteryPrizesOptionKey:         string(encoded),
+		LotteryPaidEnabledOptionKey:    strconv.FormatBool(settings.PaidEnabled),
+		LotteryPaidPriceOptionKey:      strconv.Itoa(settings.PaidPrice),
+		LotteryPaidDailyLimitOptionKey: strconv.Itoa(settings.PaidDailyLimit),
 	}); err != nil {
 		return LotterySettings{}, err
 	}

@@ -29,18 +29,23 @@ import {
   PricingLeaderboardSection,
   PulseSection,
   RankingsHero,
+  UserLeaderboardSection,
 } from './components'
 import { useRankings } from './hooks/use-rankings'
-import type { RankingPeriod } from './types'
+import type { RankingPeriod, RankingsSnapshot } from './types'
 
-const VALID_PERIODS: RankingPeriod[] = ['today', 'week', 'month', 'year']
+const VALID_PERIODS = new Set<RankingPeriod>([
+  'today',
+  'week',
+  'month',
+  'year',
+])
 
 export function Rankings() {
-  const { t } = useTranslation()
   const search = useSearch({ from: '/rankings/' })
   const navigate = useNavigate()
 
-  const period: RankingPeriod = VALID_PERIODS.includes(
+  const period: RankingPeriod = VALID_PERIODS.has(
     search.period as RankingPeriod
   )
     ? (search.period as RankingPeriod)
@@ -80,39 +85,64 @@ export function Rankings() {
           {/* 价格榜（hc41）：只依赖本站定价，用量数据为空时也照常展示。 */}
           <PricingLeaderboardSection />
 
-          {rankingsQuery.isLoading ? (
-            <RankingsLoading />
-          ) : !snapshot ? (
-            <RankingsError
-              message={
-                rankingsQuery.error instanceof Error
-                  ? rankingsQuery.error.message
-                  : t('Unable to load rankings data')
-              }
-            />
-          ) : (
-            <>
-              <ModelsSection
-                history={snapshot.models_history}
-                rows={snapshot.models}
-                period={period}
-              />
+          {/* 用户消耗榜（hc47）：独立接口，公开可看榜，登录后显示「我的排名」。 */}
+          <UserLeaderboardSection period={period} />
 
-              <MarketShareSection
-                history={snapshot.vendor_share_history}
-                rows={snapshot.vendors}
-                period={period}
-              />
-
-              <PulseSection
-                movers={snapshot.top_movers}
-                droppers={snapshot.top_droppers}
-              />
-            </>
-          )}
+          <SnapshotSections
+            isLoading={rankingsQuery.isLoading}
+            snapshot={snapshot}
+            error={rankingsQuery.error}
+            period={period}
+          />
         </PageTransition>
       </div>
     </PublicLayout>
+  )
+}
+
+/** 用量数据三态（加载中 / 失败 / 有数据）放在这里，避免页面主体堆嵌套三元。 */
+function SnapshotSections(props: {
+  isLoading: boolean
+  snapshot?: RankingsSnapshot
+  error: unknown
+  period: RankingPeriod
+}) {
+  const { t } = useTranslation()
+  const { isLoading, snapshot, error, period } = props
+
+  if (isLoading) {
+    return <RankingsLoading />
+  }
+  if (!snapshot) {
+    return (
+      <RankingsError
+        message={
+          error instanceof Error
+            ? error.message
+            : t('Unable to load rankings data')
+        }
+      />
+    )
+  }
+  return (
+    <>
+      <ModelsSection
+        history={snapshot.models_history}
+        rows={snapshot.models}
+        period={period}
+      />
+
+      <MarketShareSection
+        history={snapshot.vendor_share_history}
+        rows={snapshot.vendors}
+        period={period}
+      />
+
+      <PulseSection
+        movers={snapshot.top_movers}
+        droppers={snapshot.top_droppers}
+      />
+    </>
   )
 }
 

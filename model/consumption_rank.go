@@ -98,6 +98,94 @@ type UserConsumptionProfile struct {
 	Status      int    `json:"status" gorm:"column:status"`
 }
 
+// UserConsumptionSelf 是「我的排名」（hc47）：单个用户在窗口内的消耗、
+// 名次、以及和上一名的差距。Rank 为 0 表示窗口内没有消耗（不上榜）。
+type UserConsumptionSelf struct {
+	UserId       int
+	UsedQuota    int64
+	RequestCount int64
+	Rank         int
+	// AheadQuota 是紧邻我上面那一名的窗口消耗；Rank<=1 时为 0。
+	AheadQuota int64
+	// TotalUsers 是窗口内有消耗的人数（含未进前 N 的人），用于「超过 x% 用户」。
+	TotalUsers int64
+}
+
+// GetUserConsumptionSelf 计算某用户在窗口内的消耗、名次与追赶目标。
+//
+// 名次口径与 GetUserConsumptionRank 完全一致（同窗口、同 type 过滤、同
+// user_id 聚合、同「消耗 > 0」门槛）：名次 = 消耗严格大于我的人数 + 1，
+// 因此并列同额度的人共享名次，不会出现「同分不同名」的迷惑结果。
+func GetUserConsumptionSelf(userId int, start, end int64) (UserConsumptionSelf, error) {
+	var self UserConsumptionSelf
+	if LOG_DB == nil || userId <= 0 {
+		return self, nil
+	}
+	self.UserId = userId
+
+	// 1) 我在窗口内的消耗与请求数。
+	mine := LOG_DB.Table("logs").
+		Select("COALESCE(SUM(quota), 0) AS used_quota, COUNT(*) AS request_count").
+		Where("type = ? AND user_id = ?", LogTypeConsume, userId)
+	if start > 0 {
+		mine = mine.Where("created_at >= ?", start)
+	}
+	if end > 0 {
+		mine = mine.Where("created_at < ?", end)
+	}
+	var mineRow struct {
+		UsedQuota    int64 `gorm:"column:used_quota"`
+		RequestCount int64 `gorm:"column:request_count"`
+	}
+	if err := mine.Scan(&mineRow).Error; err != nil {
+		return self, err
+	}
+	self.UsedQuota = mineRow.UsedQuota
+	self.RequestCount = mineRow.RequestCount
+
+	// 2) 窗口内有消耗的总人数：没有这个数就没法说「你超过了 87% 的人」。
+	totals, err := GetUserConsumptionTotals(start, end)
+	if err != nil {
+		return self, err
+	}
+	self.TotalUsers = totals.UserCount
+
+	// 消耗 <= 0 与榜单口径一致，一律不上榜（名次 0）。
+	if self.UsedQuota <= 0 {
+		return self, nil
+	}
+
+	// 3) 比我高的人数 + 紧邻我上一名的消耗。
+	//
+	// 用「按 user_id 聚合后的派生表」再统计，才能按"人均消耗"排名；
+	// 直接在 logs 上比单条 quota 会把大客户的零散小额请求算漏。
+	agg := LOG_DB.Table("logs").
+		Select("SUM(quota) AS used_quota").
+		Where("type = ? AND user_id > ?", LogTypeConsume, 0)
+	if start > 0 {
+		agg = agg.Where("created_at >= ?", start)
+	}
+	if end > 0 {
+		agg = agg.Where("created_at < ?", end)
+	}
+	agg = agg.Group("user_id").Having("COALESCE(SUM(quota), 0) > 0")
+
+	var ahead struct {
+		AheadCount int64 `gorm:"column:ahead_count"`
+		NextQuota  int64 `gorm:"column:next_quota"`
+	}
+	err = LOG_DB.Table("(?) as ranked", agg).
+		Select("COUNT(*) AS ahead_count, COALESCE(MIN(used_quota), 0) AS next_quota").
+		Where("used_quota > ?", self.UsedQuota).
+		Scan(&ahead).Error
+	if err != nil {
+		return self, err
+	}
+	self.Rank = int(ahead.AheadCount) + 1
+	self.AheadQuota = ahead.NextQuota
+	return self, nil
+}
+
 // GetUserConsumptionProfiles 批量取榜单用户的展示名、余额与累计消耗。
 func GetUserConsumptionProfiles(userIds []int) ([]UserConsumptionProfile, error) {
 	profiles := make([]UserConsumptionProfile, 0, len(userIds))

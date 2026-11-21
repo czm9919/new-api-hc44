@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -125,7 +126,7 @@ func TestSpinLotteryRequiresQQ(t *testing.T) {
 	setupLotteryTestDB(t)
 	user := createLotteryTestUser(t, "spin-user")
 
-	_, err := SpinLottery(user.Id)
+	_, err := SpinLottery(user.Id, false)
 	assert.ErrorIs(t, err, ErrLotteryQQRequired)
 }
 
@@ -140,7 +141,7 @@ func TestSpinLotteryGrantsFreeQuotaAndCountsDown(t *testing.T) {
 		`[{"id":"q","name":"固定 1000","type":"quota","quota":1000,"weight":1}]`)
 	setLotteryOption(t, LotteryDailySpinsOptionKey, "2")
 
-	result, err := SpinLottery(user.Id)
+	result, err := SpinLottery(user.Id, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1000, result.QuotaAwarded)
 	assert.Equal(t, 1, result.SpinsUsed)
@@ -152,11 +153,11 @@ func TestSpinLotteryGrantsFreeQuotaAndCountsDown(t *testing.T) {
 	assert.Equal(t, 1000, after.FreeQuota, "奖品走免费额度口径")
 
 	// 第二次用完
-	_, err = SpinLottery(user.Id)
+	_, err = SpinLottery(user.Id, false)
 	require.NoError(t, err)
 
 	// 第三次超限
-	_, err = SpinLottery(user.Id)
+	_, err = SpinLottery(user.Id, false)
 	assert.ErrorIs(t, err, ErrLotteryNoSpinsLeft)
 }
 
@@ -165,7 +166,7 @@ func TestSpinLotteryDisabled(t *testing.T) {
 	user := createLotteryTestUser(t, "spin-user")
 	setLotteryOption(t, LotteryEnabledOptionKey, "false")
 
-	_, err := SpinLottery(user.Id)
+	_, err := SpinLottery(user.Id, false)
 	assert.ErrorIs(t, err, ErrLotteryDisabled)
 }
 
@@ -272,7 +273,7 @@ func TestSpinLotteryConcurrentRespectsDailyLimit(t *testing.T) {
 	results := make(chan error, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
-			_, err := SpinLottery(user.Id)
+			_, err := SpinLottery(user.Id, false)
 			results <- err
 		}()
 	}
@@ -396,4 +397,225 @@ func TestResetLotterySettings(t *testing.T) {
 	assert.Equal(t, 1, reset.DailySpins)
 	assert.True(t, reset.RequireQQ)
 	assert.Equal(t, DefaultLotteryPrizes(), reset.Prizes)
+	// 付费抽奖默认关闭：运营显式打开才会向用户收费。
+	assert.False(t, reset.PaidEnabled)
 }
+
+// ---------- 付费抽奖 ----------
+
+// enablePaidLottery 打开付费抽奖，并把奖池换成「必中谢谢参与」，
+// 这样额度变动只来自抽奖扣费，断言不被奖品干扰。
+func enablePaidLottery(t *testing.T, price, limit int) {
+	t.Helper()
+	setLotteryOption(t, LotteryRequireQQOptionKey, "false")
+	setLotteryOption(t, LotteryPaidEnabledOptionKey, "true")
+	setLotteryOption(t, LotteryPaidPriceOptionKey, strconv.Itoa(price))
+	setLotteryOption(t, LotteryPaidDailyLimitOptionKey, strconv.Itoa(limit))
+	setLotteryOption(t, LotteryPrizesOptionKey,
+		`[{"id":"none","name":"谢谢参与","type":"none","weight":1}]`)
+}
+
+func setLotteryTestWallet(t *testing.T, userId, quota, freeQuota int) {
+	t.Helper()
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", userId).
+		Updates(map[string]any{"quota": quota, "free_quota": freeQuota}).Error)
+}
+
+func readLotteryTestWallet(t *testing.T, userId int) (int, int) {
+	t.Helper()
+	var user model.User
+	require.NoError(t, model.DB.Where("id = ?", userId).Take(&user).Error)
+	return user.Quota, user.FreeQuota
+}
+
+// 默认配置下付费抽奖必须关闭（不能一上线就悄悄扣用户钱）。
+func TestSpinLotteryPaidDisabledByDefault(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-user")
+	setLotteryOption(t, LotteryRequireQQOptionKey, "false")
+
+	_, err := SpinLottery(user.Id, true)
+	assert.ErrorIs(t, err, ErrLotteryPaidDisabled)
+}
+
+// 付费抽奖只扣付费余额，不动免费额度。
+func TestSpinLotteryPaidDeductsPaidBalanceOnly(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-user")
+	enablePaidLottery(t, 1000, 3)
+	setLotteryTestWallet(t, user.Id, 5000, 2000) // 付费余额 = 3000
+
+	result, err := SpinLottery(user.Id, true)
+	require.NoError(t, err)
+	assert.True(t, result.Paid)
+	assert.Equal(t, 1000, result.QuotaCost)
+	assert.Equal(t, 2, result.PaidSpinsLeft)
+	assert.Equal(t, 1, result.PaidSpinsUsed)
+
+	quota, freeQuota := readLotteryTestWallet(t, user.Id)
+	assert.Equal(t, 4000, quota, "工作余额扣掉一次价格")
+	assert.Equal(t, 2000, freeQuota, "免费额度不能被抽奖吃掉")
+
+	var spin model.LotterySpin
+	require.NoError(t, model.DB.Where("user_id = ?", user.Id).Take(&spin).Error)
+	assert.True(t, spin.Paid)
+	assert.Equal(t, 1000, spin.QuotaCost)
+}
+
+// 付费余额不足：拒绝，且一分钱都不能扣、记录也不能落。
+func TestSpinLotteryPaidInsufficientBalance(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-poor")
+	enablePaidLottery(t, 1000, 3)
+	setLotteryTestWallet(t, user.Id, 2000, 2000) // 付费余额 = 0
+
+	_, err := SpinLottery(user.Id, true)
+	assert.ErrorIs(t, err, ErrLotteryInsufficientQuota)
+
+	quota, freeQuota := readLotteryTestWallet(t, user.Id)
+	assert.Equal(t, 2000, quota)
+	assert.Equal(t, 2000, freeQuota)
+	used, err := model.CountLotterySpinsOnDay(user.Id, model.LotteryDayKey(time.Now()))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), used, "扣费失败不应留下抽奖记录")
+}
+
+// 付费次数与免费次数分开计：免费抽完还能付费抽，互不占用。
+func TestSpinLotteryPaidDoesNotConsumeFreeSpins(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-mixed")
+	enablePaidLottery(t, 500, 2)
+	setLotteryOption(t, LotteryDailySpinsOptionKey, "1")
+	setLotteryTestWallet(t, user.Id, 10000, 0)
+
+	_, err := SpinLottery(user.Id, false)
+	require.NoError(t, err)
+	_, err = SpinLottery(user.Id, false)
+	assert.ErrorIs(t, err, ErrLotteryNoSpinsLeft, "免费次数已用完")
+
+	// 付费通道不受免费次数限制
+	_, err = SpinLottery(user.Id, true)
+	require.NoError(t, err)
+
+	status, err := GetLotteryStatus(user.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 0, status.SpinsRemaining, "免费次数仍为 0")
+	assert.Equal(t, 1, status.PaidSpinsUsed)
+	assert.Equal(t, 1, status.PaidSpinsRemaining)
+	assert.Equal(t, 9500, status.Quota)
+	assert.Equal(t, 9500, status.PaidQuota)
+	assert.True(t, status.PaidAffordable)
+}
+
+// 付费每日上限生效。
+func TestSpinLotteryPaidDailyLimit(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-limit")
+	enablePaidLottery(t, 100, 2)
+	setLotteryTestWallet(t, user.Id, 100000, 0)
+
+	for i := 0; i < 2; i++ {
+		_, err := SpinLottery(user.Id, true)
+		require.NoError(t, err)
+	}
+	_, err := SpinLottery(user.Id, true)
+	assert.ErrorIs(t, err, ErrLotteryPaidNoSpinsLeft)
+
+	quota, _ := readLotteryTestWallet(t, user.Id)
+	assert.Equal(t, 99800, quota, "被拒的那次不能扣费")
+}
+
+// 并发付费抽奖：只能成功上限次数，且余额只被扣成功次数（失败必须退款）。
+func TestSpinLotteryPaidConcurrentChargesOnlySuccesses(t *testing.T) {
+	setupLotteryTestDB(t)
+	user := createLotteryTestUser(t, "paid-race")
+	enablePaidLottery(t, 1000, 1)
+	setLotteryTestWallet(t, user.Id, 10000, 0)
+
+	const workers = 6
+	results := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			_, err := SpinLottery(user.Id, true)
+			results <- err
+		}()
+	}
+	success := 0
+	for i := 0; i < workers; i++ {
+		if err := <-results; err == nil {
+			success++
+		}
+	}
+	assert.Equal(t, 1, success, "付费上限 1 次时并发只能成功 1 个")
+
+	quota, _ := readLotteryTestWallet(t, user.Id)
+	assert.Equal(t, 10000-1000*success, quota, "只扣成功次数对应的额度，失败必须退款")
+
+	paidUsed, err := model.CountLotteryPaidSpinsOnDay(user.Id, model.LotteryDayKey(time.Now()))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), paidUsed)
+}
+
+// 付费参数校验：开关打开时必须价格 > 0、次数 > 0，越界要逐字段报错。
+func TestValidateLotterySettingsPaidFields(t *testing.T) {
+	base := func() LotterySettings {
+		return LotterySettings{
+			Enabled: true, DailySpins: 1, RequireQQ: false,
+			Prizes:         DefaultLotteryPrizes(),
+			PaidEnabled:    true,
+			PaidPrice:      5000,
+			PaidDailyLimit: 5,
+		}
+	}
+	require.NoError(t, ValidateLotterySettings(base()))
+
+	cases := []struct {
+		name      string
+		mutate    func(*LotterySettings)
+		wantField string
+	}{
+		{"价格超出上限", func(s *LotterySettings) { s.PaidPrice = LotteryMaxPaidPrice + 1 }, "paid_price"},
+		{"价格为负", func(s *LotterySettings) { s.PaidPrice = -1 }, "paid_price"},
+		{"开启但价格为零", func(s *LotterySettings) { s.PaidPrice = 0 }, "paid_price"},
+		{"次数超出上限", func(s *LotterySettings) { s.PaidDailyLimit = LotteryMaxPaidDailyLimit + 1 }, "paid_daily_limit"},
+		{"次数为负", func(s *LotterySettings) { s.PaidDailyLimit = -1 }, "paid_daily_limit"},
+		{"开启但次数为零", func(s *LotterySettings) { s.PaidDailyLimit = 0 }, "paid_daily_limit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := base()
+			tc.mutate(&settings)
+			err := ValidateLotterySettings(settings)
+			require.Error(t, err)
+			var invalid *LotterySettingsError
+			require.ErrorAs(t, err, &invalid)
+			fields := make([]string, 0, len(invalid.Fields))
+			for _, f := range invalid.Fields {
+				fields = append(fields, f.Field)
+			}
+			assert.Contains(t, fields, tc.wantField, "错误字段清单：%v", fields)
+		})
+	}
+}
+
+// 付费配置能存下去也能读回来（避免「保存成功但读回默认值」）。
+func TestSaveAndReloadPaidLotterySettings(t *testing.T) {
+	setupLotteryTestDB(t)
+	saved, err := SaveLotterySettings(LotterySettings{
+		Enabled: true, DailySpins: 2, RequireQQ: false,
+		Prizes:         DefaultLotteryPrizes(),
+		PaidEnabled:    true,
+		PaidPrice:      8000,
+		PaidDailyLimit: 9,
+	})
+	require.NoError(t, err)
+	assert.True(t, saved.PaidEnabled)
+	assert.Equal(t, 8000, saved.PaidPrice)
+	assert.Equal(t, 9, saved.PaidDailyLimit)
+
+	reloaded := GetLotterySettings()
+	assert.True(t, reloaded.PaidEnabled)
+	assert.Equal(t, 8000, reloaded.PaidPrice)
+	assert.Equal(t, 9, reloaded.PaidDailyLimit)
+}
+

@@ -25,15 +25,29 @@ func GetLottery(c *gin.Context) {
 	common.ApiSuccess(c, status)
 }
 
-// SpinLottery 抽一次奖。
+// SpinLottery 抽一次奖。body 里 paid=true 表示付费抽奖（扣付费余额）。
 func SpinLottery(c *gin.Context) {
 	userId := c.GetInt("id")
-	result, err := service.SpinLottery(userId)
+	// 请求体是可选的：老客户端不带 body 时按免费抽奖处理，保持兼容。
+	var req struct {
+		Paid bool `json:"paid"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest,
+				common.NewMessage("invalid request body"), gin.H{"code": "INVALID_REQUEST"})
+			return
+		}
+	}
+	result, err := service.SpinLottery(userId, req.Paid)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrLotteryDisabled):
 			common.ApiErrorStatus(c, http.StatusForbidden,
 				common.NewMessage("lottery is not enabled"), gin.H{"code": "LOTTERY_DISABLED"})
+		case errors.Is(err, service.ErrLotteryPaidDisabled):
+			common.ApiErrorStatus(c, http.StatusForbidden,
+				common.NewMessage("paid lottery is not enabled"), gin.H{"code": "LOTTERY_PAID_DISABLED"})
 		case errors.Is(err, service.ErrLotteryQQRequired):
 			common.ApiErrorStatus(c, http.StatusForbidden,
 				common.NewMessage("bind a QQ account before spinning"),
@@ -41,6 +55,13 @@ func SpinLottery(c *gin.Context) {
 		case errors.Is(err, service.ErrLotteryNoSpinsLeft):
 			common.ApiErrorStatus(c, http.StatusTooManyRequests,
 				common.NewMessage("no spins left today"), gin.H{"code": "LOTTERY_NO_SPINS"})
+		case errors.Is(err, service.ErrLotteryPaidNoSpinsLeft):
+			common.ApiErrorStatus(c, http.StatusTooManyRequests,
+				common.NewMessage("no paid spins left today"), gin.H{"code": "LOTTERY_PAID_NO_SPINS"})
+		case errors.Is(err, service.ErrLotteryInsufficientQuota):
+			common.ApiErrorStatus(c, http.StatusPaymentRequired,
+				common.NewMessage("insufficient paid quota"),
+				gin.H{"code": "LOTTERY_INSUFFICIENT_QUOTA"})
 		default:
 			common.ApiError(c, err)
 		}

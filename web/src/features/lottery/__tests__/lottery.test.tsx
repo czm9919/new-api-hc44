@@ -41,6 +41,9 @@ const statusPayload = {
     enabled: true,
     daily_spins: 1,
     require_qq: true,
+    paid_enabled: false,
+    paid_price: 5000,
+    paid_daily_limit: 5,
     prizes: [
       { id: 'thanks', name: '谢谢参与', type: 'none', quota: 0, weight: 40 },
       {
@@ -54,6 +57,11 @@ const statusPayload = {
   },
   spins_used: 0,
   spins_remaining: 1,
+  paid_spins_used: 0,
+  paid_spins_remaining: 0,
+  quota: 0,
+  paid_quota: 0,
+  paid_affordable: false,
   qq_bound: false,
   qq: '',
 }
@@ -69,6 +77,8 @@ const recordsPayload = {
       prize_name: '500 额度',
       prize_type: 'quota',
       quota_awarded: 500,
+      paid: false,
+      quota_cost: 0,
       created_at: 1_763_000_000,
     },
   ],
@@ -93,6 +103,10 @@ const spinResult = {
   quota_awarded: 500,
   spins_used: 1,
   spins_remaining: 0,
+  paid_spins_used: 0,
+  paid_spins_remaining: 0,
+  paid: false,
+  quota_cost: 0,
   spin: {
     id: 3,
     user_id: 10,
@@ -102,6 +116,8 @@ const spinResult = {
     prize_name: '500 额度',
     prize_type: 'quota',
     quota_awarded: 500,
+    paid: false,
+    quota_cost: 0,
     created_at: 1_763_000_100,
   },
 }
@@ -119,6 +135,8 @@ function renderPage() {
 /** 按 URL 分流 mock：三个 GET + 一个 POST。 */
 function mockApi(options?: {
   qqBound?: boolean
+  /** 覆盖 /api/user/lottery 返回的状态（付费抽奖用例用）。 */
+  status?: Record<string, unknown>
   spin?: () => Promise<unknown>
   bindCode?: () => Promise<unknown>
 }) {
@@ -131,6 +149,7 @@ function mockApi(options?: {
           message: '',
           data: {
             ...statusPayload,
+            ...options?.status,
             qq_bound: qqBound,
             qq: qqBound ? '123****89' : '',
           },
@@ -210,7 +229,9 @@ describe('LotteryPage', () => {
     fireEvent.click(spinButton)
 
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/api/user/lottery/spin')
+      expect(post).toHaveBeenCalledWith('/api/user/lottery/spin', {
+        paid: false,
+      })
     )
     // 转盘动画 3.2s 后才展示结果横幅
     await act(async () => {
@@ -262,5 +283,77 @@ describe('LotteryPage', () => {
     expect(await screen.findByText('Recent spins')).toBeInTheDocument()
     // 记录行里的额度增量（奖品名在转盘/奖池/记录三处出现，用增量文案断言）
     expect(screen.getAllByText(/\+500/).length).toBeGreaterThan(0)
+  })
+
+  it('only shows the paid button when the site enables paid spins', async () => {
+    mockApi({ qqBound: true })
+    renderPage()
+
+    await screen.findByRole('button', { name: 'Spin' })
+    expect(screen.queryByRole('button', { name: /Spin for/ })).toBeNull()
+  })
+
+  it('disables the paid button when the paid balance is not enough', async () => {
+    mockApi({
+      qqBound: true,
+      status: {
+        settings: { ...statusPayload.settings, paid_enabled: true },
+        spins_remaining: 0,
+        paid_spins_remaining: 3,
+        paid_quota: 100,
+        paid_affordable: false,
+      },
+    })
+    renderPage()
+
+    const paidButton = await screen.findByRole('button', { name: /Spin for/ })
+    expect(paidButton).toBeDisabled()
+    expect(
+      screen.getByText('No free spins left. Paid balance is not enough.')
+    ).toBeInTheDocument()
+  })
+
+  it('spends paid quota and reports the cost in the banner', async () => {
+    const paidResult = {
+      ...spinResult,
+      paid: true,
+      quota_cost: 5000,
+      paid_spins_used: 1,
+      paid_spins_remaining: 2,
+      spin: { ...spinResult.spin, paid: true, quota_cost: 5000 },
+    }
+    mockApi({
+      qqBound: true,
+      status: {
+        settings: { ...statusPayload.settings, paid_enabled: true },
+        spins_remaining: 0,
+        paid_spins_remaining: 3,
+        paid_quota: 20000,
+        paid_affordable: true,
+      },
+    })
+    const post = vi.spyOn(api, 'post').mockImplementation((url: string) =>
+      url === '/api/user/lottery/spin'
+        ? Promise.resolve({
+            data: { success: true, message: '', data: paidResult },
+          })
+        : Promise.resolve({ data: { success: true, message: '', data: {} } })
+    )
+
+    renderPage()
+    const paidButton = await screen.findByRole('button', { name: /Spin for/ })
+    await waitFor(() => expect(paidButton).not.toBeDisabled())
+    fireEvent.click(paidButton)
+
+    // 付费抽奖必须把 paid:true 传给后端，否则会被当成免费抽奖。
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/user/lottery/spin', {
+        paid: true,
+      })
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 3400))
+    })
+    expect(screen.getByText(/This spin cost/)).toBeInTheDocument()
   })
 })

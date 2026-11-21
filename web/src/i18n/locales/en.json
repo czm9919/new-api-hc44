@@ -8129,6 +8129,24 @@
     "Prize id must be unique": "Prize id must be unique",
     "At least one prize needs a positive weight": "At least one prize needs a positive weight",
     "Save lottery settings": "Save lottery settings",
-    "Save bot settings": "Save bot settings"
+    "Save bot settings": "Save bot settings",
+    "User Leaderboard": "User Leaderboard",
+    "Ranked by consumption in this period. Usernames are masked; sign in to see your own rank.": "Ranked by consumption in this period. Usernames are masked; sign in to see your own rank.",
+    "participants": "participants",
+    "My rank": "My rank",
+    "of {{count}}": "of {{count}}",
+    "My spend": "My spend",
+    "Gap to the next rank": "Gap to the next rank",
+    "Ahead of {{percent}} of users": "Ahead of {{percent}} of users",
+    "Spend {{amount}} more to take the spot above you": "Spend {{amount}} more to take the spot above you",
+    "You are #1 this period — keep it up.": "You are #1 this period — keep it up.",
+    "Not on the board yet": "Not on the board yet",
+    "No consumption in this period yet": "No consumption in this period yet",
+    "No consumption in this period yet — send one request to get on the board.": "No consumption in this period yet — send one request to get on the board.",
+    "Sign in to see your rank": "Sign in to see your rank",
+    "and this card shows your rank and the gap to the user above you.": "and this card shows your rank and the gap to the user above you.",
+    "Usernames are masked. The board is recomputed every minute; only consumption logs count.": "Usernames are masked. The board is recomputed every minute; only consumption logs count.",
+    "Unable to load the user leaderboard": "Unable to load the user leaderboard",
+    "Me": "Me"
   }
 }

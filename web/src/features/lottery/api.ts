@@ -41,12 +41,28 @@ export interface LotterySettings {
   daily_spins: number
   require_qq: boolean
   prizes: LotteryPrize[]
+  /** 付费抽奖开关：关闭时用户只能用每日免费次数。 */
+  paid_enabled: boolean
+  /** 单次付费抽奖价格（额度，只扣付费余额）。 */
+  paid_price: number
+  /** 每日付费抽奖次数上限（与免费次数分开计）。 */
+  paid_daily_limit: number
 }
 
 export interface LotteryStatus {
   settings: LotterySettings
   spins_used: number
   spins_remaining: number
+  /** 今日已付费抽奖次数。 */
+  paid_spins_used: number
+  /** 今日剩余付费抽奖次数。 */
+  paid_spins_remaining: number
+  /** 工作余额（含免费部分）。 */
+  quota: number
+  /** 付费余额（quota - free_quota），付费抽奖只认这个数。 */
+  paid_quota: number
+  /** 现在能不能付费抽一次，后端算好，前端直接用。 */
+  paid_affordable: boolean
   qq_bound: boolean
   /** 已脱敏（例如 123****89）；未绑定为空串。 */
   qq: string
@@ -61,6 +77,10 @@ export interface LotterySpin {
   prize_name: string
   prize_type: string
   quota_awarded: number
+  /** 本次是否为付费抽奖。 */
+  paid: boolean
+  /** 本次花费的额度（免费抽奖为 0）。 */
+  quota_cost: number
   created_at: number
 }
 
@@ -71,6 +91,10 @@ export interface LotterySpinResult {
   quota_awarded: number
   spins_used: number
   spins_remaining: number
+  paid_spins_used: number
+  paid_spins_remaining: number
+  paid: boolean
+  quota_cost: number
   spin: LotterySpin
 }
 
@@ -92,8 +116,9 @@ export async function getLottery(): Promise<LotteryStatus> {
   return requireServerSuccess(res.data)?.data
 }
 
-export async function spinLottery(): Promise<LotterySpinResult> {
-  const res = await api.post('/api/user/lottery/spin')
+/** 抽一次奖。paid=true 走付费通道（扣付费余额，免费次数不消耗）。 */
+export async function spinLottery(paid = false): Promise<LotterySpinResult> {
+  const res = await api.post('/api/user/lottery/spin', { paid })
   return requireServerSuccess(res.data)?.data
 }
 

@@ -299,10 +299,16 @@ const PRIZE_WEIGHT_MIN = 1
 const PRIZE_WEIGHT_MAX = 1000
 const PRIZE_QUOTA_MAX = 1000000
 const DAILY_SPINS_MAX = 50
+// 与后端 service.LotteryMaxPaidPrice / LotteryMaxPaidDailyLimit 保持一致。
+const PAID_PRICE_MAX = 1000000
+const PAID_DAILY_LIMIT_MAX = 200
 
 function validatePrizeDraft(
   prizes: LotteryPrize[],
   dailySpins: number,
+  paidEnabled: boolean,
+  paidPrice: number,
+  paidDailyLimit: number,
   t: (key: string, options?: Record<string, unknown>) => string
 ): Record<string, string> {
   const errors: Record<string, string> = {}
@@ -314,6 +320,32 @@ function validatePrizeDraft(
     errors.daily_spins = t('Daily spins must be between 0 and {{max}}', {
       max: DAILY_SPINS_MAX,
     })
+  }
+  // 付费抽奖：关闭时允许留 0，开启时价格与次数都必须 > 0，否则用户点了也抽不了。
+  if (
+    !Number.isFinite(paidPrice) ||
+    paidPrice < 0 ||
+    paidPrice > PAID_PRICE_MAX
+  ) {
+    errors.paid_price = t('Paid price must be between 0 and {{max}}', {
+      max: PAID_PRICE_MAX,
+    })
+  } else if (paidEnabled && paidPrice <= 0) {
+    errors.paid_price = t('Paid price must be positive when paid spins are on')
+  }
+  if (
+    !Number.isFinite(paidDailyLimit) ||
+    paidDailyLimit < 0 ||
+    paidDailyLimit > PAID_DAILY_LIMIT_MAX
+  ) {
+    errors.paid_daily_limit = t(
+      'Paid daily limit must be between 0 and {{max}}',
+      { max: PAID_DAILY_LIMIT_MAX }
+    )
+  } else if (paidEnabled && paidDailyLimit <= 0) {
+    errors.paid_daily_limit = t(
+      'Paid daily limit must be positive when paid spins are on'
+    )
   }
   if (prizes.length === 0) {
     errors.prizes = t('Prize pool needs at least one prize')
@@ -396,6 +428,11 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
   const [enabled, setEnabled] = useState(props.settings.enabled)
   const [requireQQ, setRequireQQ] = useState(props.settings.require_qq)
   const [dailySpins, setDailySpins] = useState(props.settings.daily_spins)
+  const [paidEnabled, setPaidEnabled] = useState(props.settings.paid_enabled)
+  const [paidPrice, setPaidPrice] = useState(props.settings.paid_price)
+  const [paidDailyLimit, setPaidDailyLimit] = useState(
+    props.settings.paid_daily_limit
+  )
   const [prizes, setPrizes] = useState<LotteryPrize[]>(props.settings.prizes)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState('')
@@ -406,12 +443,23 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
     setEnabled(props.settings.enabled)
     setRequireQQ(props.settings.require_qq)
     setDailySpins(props.settings.daily_spins)
+    setPaidEnabled(props.settings.paid_enabled)
+    setPaidPrice(props.settings.paid_price)
+    setPaidDailyLimit(props.settings.paid_daily_limit)
     setPrizes(props.settings.prizes)
   }, [props.settings])
 
   const localErrors = useMemo(
-    () => validatePrizeDraft(prizes, dailySpins, t),
-    [prizes, dailySpins, t]
+    () =>
+      validatePrizeDraft(
+        prizes,
+        dailySpins,
+        paidEnabled,
+        paidPrice,
+        paidDailyLimit,
+        t
+      ),
+    [prizes, dailySpins, paidEnabled, paidPrice, paidDailyLimit, t]
   )
   const totalWeight = prizes.reduce(
     (sum, prize) => sum + (prize.weight > 0 ? prize.weight : 0),
@@ -424,6 +472,9 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
     setEnabled(saved.enabled)
     setRequireQQ(saved.require_qq)
     setDailySpins(saved.daily_spins)
+    setPaidEnabled(saved.paid_enabled)
+    setPaidPrice(saved.paid_price)
+    setPaidDailyLimit(saved.paid_daily_limit)
     setPrizes(saved.prizes)
     void queryClient.invalidateQueries({ queryKey: ['lottery-status'] })
     void queryClient.invalidateQueries({ queryKey: ['admin-lottery-settings'] })
@@ -474,6 +525,9 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
       enabled,
       daily_spins: dailySpins,
       require_qq: requireQQ,
+      paid_enabled: paidEnabled,
+      paid_price: paidPrice,
+      paid_daily_limit: paidDailyLimit,
       prizes: prizes.map((prize) => ({
         ...prize,
         name: prize.name.trim(),
@@ -532,6 +586,76 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
         {errorOf('daily_spins') ? (
           <p className='text-destructive text-xs'>{errorOf('daily_spins')}</p>
         ) : null}
+
+        <div className='space-y-2 border-t pt-4'>
+          <div className='flex flex-wrap items-center gap-x-6 gap-y-3 text-sm'>
+            <label className='flex items-center gap-2'>
+              <Switch
+                checked={paidEnabled}
+                onCheckedChange={(checked) => setPaidEnabled(checked)}
+                size='sm'
+                aria-label={t('Paid spins enabled')}
+              />
+              {t('Paid spins enabled')}
+            </label>
+            <label className='flex items-center gap-2'>
+              {t('Paid price')}
+              <Input
+                type='number'
+                min={0}
+                max={PAID_PRICE_MAX}
+                value={paidPrice}
+                onChange={(event) => setPaidPrice(Number(event.target.value))}
+                className='w-28'
+                aria-label={t('Paid price')}
+                aria-invalid={Boolean(errorOf('paid_price'))}
+              />
+              <span className='text-muted-foreground text-xs'>
+                {t('quota per paid spin')}
+              </span>
+            </label>
+            <label className='flex items-center gap-2'>
+              {t('Paid spins per day')}
+              <Input
+                type='number'
+                min={0}
+                max={PAID_DAILY_LIMIT_MAX}
+                value={paidDailyLimit}
+                onChange={(event) =>
+                  setPaidDailyLimit(Number(event.target.value))
+                }
+                className='w-20'
+                aria-label={t('Paid spins per day')}
+                aria-invalid={Boolean(errorOf('paid_daily_limit'))}
+              />
+              <span className='text-muted-foreground text-xs'>
+                {t('per user per day, up to {{max}}', {
+                  max: PAID_DAILY_LIMIT_MAX,
+                })}
+              </span>
+            </label>
+          </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Paid spins only spend the paid balance, never the free quota. Users without enough balance are rejected instead of going negative.'
+            )}
+          </p>
+          {paidEnabled && paidPrice > 0 && paidDailyLimit > 0 ? (
+            <p className='text-muted-foreground text-xs'>
+              {t('Max paid spend per user per day: {{amount}}', {
+                amount: paidPrice * paidDailyLimit,
+              })}
+            </p>
+          ) : null}
+          {errorOf('paid_price') ? (
+            <p className='text-destructive text-xs'>{errorOf('paid_price')}</p>
+          ) : null}
+          {errorOf('paid_daily_limit') ? (
+            <p className='text-destructive text-xs'>
+              {errorOf('paid_daily_limit')}
+            </p>
+          ) : null}
+        </div>
 
         <div className='space-y-2'>
           <div className='flex flex-wrap items-center justify-between gap-2'>
@@ -979,11 +1103,13 @@ export function LotteryPage() {
 
   const [rotation, setRotation] = useState(0)
   const [spinning, setSpinning] = useState(false)
+  // 记住本次点的是免费还是付费按钮：转的是同一个转盘，但按钮文案与结果提示要分清。
+  const [spinPaid, setSpinPaid] = useState(false)
   const [result, setResult] = useState<LotterySpinResult | null>(null)
   const [spinError, setSpinError] = useState('')
 
   const spinMutation = useMutation({
-    mutationFn: spinLottery,
+    mutationFn: (paid: boolean) => spinLottery(paid),
     onSuccess: (data) => {
       setSpinError('')
       const total = statusQuery.data?.settings.prizes.length ?? 0
@@ -1030,19 +1156,49 @@ export function LotteryPage() {
   // 站点可以把「抽奖要求 QQ」关掉：那时未绑定用户也应该能抽。
   const qqRequired = settings?.require_qq !== false
   const qqBlocked = qqRequired && !status?.qq_bound
-  const canSpin =
+  const freeRemaining = status?.spins_remaining ?? 0
+  const paidRemaining = status?.paid_spins_remaining ?? 0
+  const paidEnabled = settings?.paid_enabled === true
+  const paidPrice = settings?.paid_price ?? 0
+  // 只有后端明确说「抽得起」才允许点：前端不再自己算余额，避免和后端口径不一致。
+  const canSpinFree =
+    Boolean(settings?.enabled) && freeRemaining > 0 && !qqBlocked && !spinning
+  const canSpinPaid =
     Boolean(settings?.enabled) &&
-    (status?.spins_remaining ?? 0) > 0 &&
+    paidEnabled &&
+    (status?.paid_affordable ?? false) &&
+    paidRemaining > 0 &&
     !qqBlocked &&
     !spinning
+  // 免费用尽后的提示：要区分「付费次数也没了」和「付费余额不够」，否则用户以为还能花钱抽。
+  let noSpinHint = ''
+  if (freeRemaining === 0 && !canSpinPaid) {
+    if (!paidEnabled) {
+      noSpinHint = t('No spins left today. Come back tomorrow.')
+    } else if (paidRemaining === 0) {
+      noSpinHint = t('No free or paid spins left today. Come back tomorrow.')
+    } else {
+      noSpinHint = t('No free spins left. Paid balance is not enough.')
+    }
+  }
 
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Lucky Wheel')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
         <Badge variant='outline'>
-          {t('Spins left today')}: {status?.spins_remaining ?? 0}
+          {t('Spins left today')}: {freeRemaining}
         </Badge>
+        {paidEnabled ? (
+          <Badge variant='outline'>
+            {t('Paid spins left')}: {paidRemaining}
+          </Badge>
+        ) : null}
+        {paidEnabled ? (
+          <Badge variant='outline'>
+            {t('Paid balance')}: {status?.paid_quota ?? 0}
+          </Badge>
+        ) : null}
         <Button
           variant='outline'
           size='sm'
@@ -1069,27 +1225,46 @@ export function LotteryPage() {
             <CardContent className='space-y-4'>
               <Wheel prizes={prizes} rotation={rotation} spinning={spinning} />
               <div className='flex flex-col items-center gap-2'>
-                <Button
-                  size='lg'
-                  disabled={!canSpin}
-                  onClick={() => {
-                    setResult(null)
-                    setSpinning(true)
-                    spinMutation.mutate()
-                  }}
-                >
-                  <Dices className='mr-2 h-5 w-5' />
-                  {spinning ? t('Spinning…') : t('Spin')}
-                </Button>
+                <div className='flex flex-wrap items-center justify-center gap-2'>
+                  <Button
+                    size='lg'
+                    disabled={!canSpinFree}
+                    onClick={() => {
+                      setResult(null)
+                      setSpinPaid(false)
+                      setSpinning(true)
+                      spinMutation.mutate(false)
+                    }}
+                  >
+                    <Dices className='mr-2 h-5 w-5' />
+                    {spinning && !spinPaid ? t('Spinning…') : t('Spin')}
+                  </Button>
+                  {paidEnabled ? (
+                    <Button
+                      size='lg'
+                      variant='outline'
+                      disabled={!canSpinPaid}
+                      onClick={() => {
+                        setResult(null)
+                        setSpinPaid(true)
+                        setSpinning(true)
+                        spinMutation.mutate(true)
+                      }}
+                    >
+                      <Coins className='mr-2 h-5 w-5' />
+                      {spinning && spinPaid
+                        ? t('Spinning…')
+                        : t('Spin for {{price}}', { price: paidPrice })}
+                    </Button>
+                  ) : null}
+                </div>
                 {qqBlocked ? (
                   <p className='text-muted-foreground text-xs'>
                     {t('Bind a QQ account first to spin.')}
                   </p>
                 ) : null}
-                {!qqBlocked && (status?.spins_remaining ?? 0) === 0 ? (
-                  <p className='text-muted-foreground text-xs'>
-                    {t('No spins left today. Come back tomorrow.')}
-                  </p>
+                {!qqBlocked && !spinning && noSpinHint ? (
+                  <p className='text-muted-foreground text-xs'>{noSpinHint}</p>
                 ) : null}
                 {spinError ? (
                   <p className='text-destructive text-xs'>{spinError}</p>
@@ -1104,6 +1279,13 @@ export function LotteryPage() {
                     {result.quota_awarded > 0 ? (
                       <p className='text-muted-foreground mt-1 flex items-center justify-center gap-1 text-xs'>
                         <Coins className='h-3 w-3' />+{result.quota_awarded}
+                      </p>
+                    ) : null}
+                    {result.quota_cost > 0 ? (
+                      <p className='text-muted-foreground mt-1 text-xs'>
+                        {t('This spin cost {{cost}} quota', {
+                          cost: result.quota_cost,
+                        })}
                       </p>
                     ) : null}
                   </div>
@@ -1157,8 +1339,16 @@ export function LotteryPage() {
                   key={record.id}
                   className='flex items-center justify-between border-b pb-2 text-sm last:border-0 last:pb-0'
                 >
-                  <span className='truncate'>{record.prize_name}</span>
+                  <span className='flex min-w-0 items-center gap-2'>
+                    <span className='truncate'>{record.prize_name}</span>
+                    {record.paid ? (
+                      <Badge variant='outline' className='shrink-0 text-[10px]'>
+                        {t('Paid')}
+                      </Badge>
+                    ) : null}
+                  </span>
                   <span className='text-muted-foreground ml-3 shrink-0 text-xs'>
+                    {record.quota_cost > 0 ? `-${record.quota_cost} · ` : ''}
                     {record.quota_awarded > 0
                       ? `+${record.quota_awarded}`
                       : '—'}{' '}
