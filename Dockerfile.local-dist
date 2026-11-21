@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+
+# =============================================================================
+# 快速版：复用本机已构建好的 web/dist，只编译 Go —— 秒级出镜像
+#
+# 适用场景：前端已经 `cd web && bun run build` 过，且不想在容器里再跑一遍
+# （8 分钟 + 2GB 内存）。容器化部署前请确认 web/dist/index.html 存在。
+#
+#   docker build -f Dockerfile.local-dist -t delta-api/new-api:local .
+#
+# 想从零开始全量构建请用默认的 Dockerfile。
+# =============================================================================
+
+FROM golang:1.27-alpine AS build
+
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOWORK=off \
+    GO111MODULE=on \
+    GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=off
+
+ARG TARGETARCH=amd64
+ENV GOARCH=${TARGETARCH}
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+COPY relaykit/go.* ./relaykit/
+COPY tokenkit/go.* ./tokenkit/
+RUN go mod download
+
+COPY . ./
+
+# 没有 web/dist 就直接失败，避免打出「白屏镜像」
+RUN test -f web/dist/index.html || (echo "web/dist 不存在，请先在 web/ 目录执行 bun run build，或改用默认 Dockerfile" && exit 1)
+
+ARG APP_VERSION=1.0.0-rc.43
+RUN go build -trimpath \
+        -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${APP_VERSION}'" \
+        -o /out/new-api .
+
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && update-ca-certificates
+
+COPY --from=build /out/new-api /new-api
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+
+# 库名必须是 new-api.db（程序默认是 one-api.db），并保留 WAL / busy_timeout pragma
+ENV TZ=Asia/Shanghai \
+    SQLITE_PATH="/data/new-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+
+EXPOSE 3000
+WORKDIR /data
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD wget -q -O - http://127.0.0.1:3000/api/status | grep -q '"success":true' || exit 1
+
+ENTRYPOINT ["/new-api"]
+CMD ["--port", "3000", "--log-dir", "/data/logs"]

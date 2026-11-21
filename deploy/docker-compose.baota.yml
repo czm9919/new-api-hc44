@@ -1,0 +1,85 @@
+# =============================================================================
+# 宝塔「编排模板」版本：直接跑已构建好的镜像，不再在服务器上 build。
+#
+# 与宝塔自带 new-api 模板的差异（都是会让容器起不来的坑）：
+#   1. 去掉 build/dockerfile —— 服务器上没有源码，build 必然失败；改用 image
+#   2. SQL_DSN 那行后面原本粘了「# Point to the mysql service」，
+#      YAML 里 # 前没有空格就不是注释，会被当成库名的一部分，
+#      于是去连一个叫 "new-api# Point to the mysql service" 的库 → 启动报错
+#   3. command 补回 --port 3000，并把日志落到 /data/logs（镜像 WORKDIR 是 /data）
+#   4. mysql 加 healthcheck，new-api 等它真正就绪再启动，避免首次建表时连不上
+#   5. 镜像自带 HEALTHCHECK，这里不再重复定义
+#
+# 宝塔里用法：Docker → 编排模板 → 新建 → 粘贴本文件 → 按提示填 APP_PATH 等变量
+# =============================================================================
+
+services:
+  new-api:
+    image: delta-api/new-api:v1.0.0-rc.43-hc26
+    container_name: new-api
+    restart: always
+    command: --port 3000 --log-dir /data/logs
+    ports:
+      - "${HOST_IP}:${WEB_HTTP_PORT}:3000"
+    volumes:
+      # 库、上传文件、日志全部落在 /data，务必持久化
+      - ${APP_PATH}/data:/data
+      - ${APP_PATH}/logs:/data/logs
+    environment:
+      # 密码里不要带 # & 等字符，否则 YAML 或 DSN 解析会出问题
+      - SQL_DSN=root:eZ1rW9jR6mU6uP4b@tcp(mysql:3306)/new-api?charset=utf8mb4&parseTime=True&loc=Local
+      - REDIS_CONN_STRING=redis://redis
+      - SESSION_SECRET=${SESSION_SECRET}
+      - TZ=Asia/Shanghai
+      - DEBUG=false
+      - BATCH_UPDATE_ENABLED=true
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: new-api-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${APP_PATH}/redis_data:/data
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+  mysql:
+    image: mysql:8.2
+    container_name: new-api-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: eZ1rW9jR6mU6uP4b
+      MYSQL_DATABASE: new-api
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - ${APP_PATH}/mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -peZ1rW9jR6mU6uP4b --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    labels:
+      createdBy: "bt_apps"
+    networks:
+      - baota_net
+
+networks:
+  baota_net:
+    external: true

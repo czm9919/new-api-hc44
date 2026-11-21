@@ -1,0 +1,51 @@
+# ---------- 版本控制 / 编辑器（不进构建上下文） ----------
+.git
+.gitattributes
+.github
+.gitignore
+.vscode
+.idea
+
+# ---------- 文档（THIRD-PARTY-LICENSES.md 需随镜像分发，单独放行） ----------
+*.md
+!THIRD-PARTY-LICENSES.md
+docs
+
+# ---------- 本地产物与数据：绝不烘焙进镜像 ----------
+new-api
+new-api.exe
+*.exe
+*.dll
+*.so
+*.dylib
+bin/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+logs/
+*.log
+server.log
+
+# ---------- 机密与本地配置（容器里用 environment 传） ----------
+.env
+.env.local
+.env.*.local
+
+# ---------- 前端依赖（容器内重新安装） ----------
+web/node_modules
+web/.tanstack
+web/.rsbuild
+.eslintcache
+
+# ---------- 与本镜像无关的目录 ----------
+electron
+e2e
+.agents
+.workbuddy
+
+# ---------- 自测脚本的临时产物 ----------
+.selftest
+.selftest-build.log
+docker-sim
