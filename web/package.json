@@ -44,7 +44,7 @@
     "@tanstack/react-virtual": "^3.14.10",
     "@visactor/react-vchart": "^2.1.7",
     "@visactor/vchart": "^2.1.7",
-    "ai": "^7.0.136",
+    "ai": "^7.0.176",
     "auto-skeleton-react": "^1.0.5",
     "axios": "^1.18.1",
     "class-variance-authority": "^0.7.1",
