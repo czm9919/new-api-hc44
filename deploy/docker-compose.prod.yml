@@ -1,0 +1,53 @@
+name: new-api
+
+# =============================================================================
+# 生产部署（镜像已在开发机构建好，服务器上只做 load + up，不重新编译）
+##   1. 导入镜像：   gunzip -c new-api.tar.gz | docker load
+#   2. 配环境变量： cp .env.example .env && vi .env   （SESSION_SECRET 必须改）
+#   3. 启动：       docker compose -f docker-compose.prod.yml up -d
+#   4. 看状态：     docker compose -f docker-compose.prod.yml ps
+#                   docker compose -f docker-compose.prod.yml logs -f
+#
+# 默认只监听 127.0.0.1:3000，由前面的 Nginx/Caddy 反代对外；
+# 没有反代要直接开公网时，把 BIND_ADDR 改成 0.0.0.0（见 .env.example）。
+# =============================================================================
+
+services:
+  new-api:
+    # 换版本时只改 .env 里的 IMAGE，不用动这个文件
+    image: ${IMAGE:-delta-api/new-api:v1.0.0-rc.43-hc26}
+    container_name: new-api
+    restart: unless-stopped
+
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+
+    volumes:
+      # 库、日志、上传文件全在 /data，务必挂出来并定期备份
+      - ./data:/data
+
+    environment:
+      TZ: Asia/Shanghai
+      # 生产关掉调试日志，少写盘也少暴露细节
+      DEBUG: "false"
+      DEFAULT_LANGUAGE: zh-CN
+      # 必填：换掉这个值会让所有已登录会话失效
+      SESSION_SECRET: ${SESSION_SECRET:?请先在 .env 里设置 SESSION_SECRET}
+      ERROR_LOG_ENABLED: "true"
+      # 高并发下合并写库，单机 SQLite 建议开着
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: ${NODE_NAME:-new-api-node-1}
+      # 上了 HTTPS 之后改成 true，并把可信地址填上，否则跨域 Cookie 带不过去
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # SESSION_COOKIE_TRUSTED_URL: https://your-domain.com
+      # 流式响应超时（秒）；长文本/推理模型容易超 60s，按需调大
+      # STREAMING_TIMEOUT: "300"
+      # 应急开关：全局关掉请求级风控限流（规则仍保留）
+      # RISK_RATE_LIMIT: "off"
+
+    # 镜像里已定义 HEALTHCHECK，这里不重复
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

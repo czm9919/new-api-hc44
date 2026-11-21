@@ -1,0 +1,21 @@
+# 构建产物与依赖
+web/node_modules/
+web/dist/
+web/.tanstack/
+web/.rsbuild/
+new-api.exe
+*.exe
+*.db
+*.db-shm
+*.db-wal
+logs/
+data/
+.run.log
+.selftest/
+.selftest-build.log
+deploy/.env
+deploy/data/
+
+# 本地构建的镜像交付包
+new-api-*.tar.gz
+new-api-*.tar

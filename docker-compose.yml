@@ -1,0 +1,89 @@
+# =============================================================================
+# 三角洲行动 API 中转站 —— Docker Compose（本地源码构建版）
+#
+# 注意：这里 build 的是**当前这份定制源码**，不是上游 calciumion/new-api 镜像。
+#
+#   1. 首次迁移已有数据（把 Windows 上跑出来的库带进来，可选）：
+#        mkdir -p data && cp new-api.db data/
+#   2. 构建并启动：
+#        docker compose up -d --build
+#   3. 访问 http://localhost:3000
+#   4. 看日志 / 健康状态：
+#        docker compose logs -f
+#        docker compose ps
+#
+# 想跳过容器内前端编译（本机已有 web/dist）：
+#   改 build.dockerfile 为 Dockerfile.local-dist
+# =============================================================================
+
+services:
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 留空时由 Dockerfile 读 VERSION 文件，避免镜像版本显示成 "local"
+        APP_VERSION: ${APP_VERSION:-}
+    image: delta-api/new-api:local
+    container_name: new-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # 数据库(SQLite)、日志、上传文件全部落在 /data，务必持久化
+      - ./data:/data
+    environment:
+      - TZ=Asia/Shanghai
+      - DEBUG=true # 与当前 .env 保持一致（日志更详细）；正式上线可改 false
+      - DEFAULT_LANGUAGE=zh-CN
+      - SESSION_SECRET=9OePKCSqJtN29zDaM2tgZgHv9UFQKKGv # 已随机生成；改了这个值会让所有已登录会话失效
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true # 高并发下减少写库次数；单机 SQLite 也建议开
+      - NODE_NAME=new-api-node-1
+      # 库名固定为 new-api.db（程序默认是 one-api.db，不指定会读不到你拷进来的旧库）
+      - SQLITE_PATH=/data/new-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate
+      # ---- 风控限流 ----
+      # RISK_RATE_LIMIT=off 可全局关闭请求级限流（应急开关，规则本身仍保留）
+      # RISK_RATE_LIMIT_BYPASS_IPS=192.168.31.0/24 内网压测白名单（回环地址本来就放行）
+      # - RISK_RATE_LIMIT=off
+      # ---- 多节点/公网部署再打开下面这些 ----
+      # - SESSION_SECRET=请换成随机长串
+      # - SESSION_COOKIE_SECURE=true
+      # - SESSION_COOKIE_TRUSTED_URL=https://your-domain.com
+      # - STREAMING_TIMEOUT=300
+      # - DEFAULT_LANGUAGE=zh-CN
+    # 单机默认用 SQLite（/data/new-api.db），不需要下面两个服务。
+    # 需要 PostgreSQL / Redis 时取消注释，并补上 SQL_DSN / REDIS_CONN_STRING。
+    # depends_on:
+    #   - postgres
+    #   - redis
+
+# ---------------------------------------------------------------- 可选：PostgreSQL
+#  volumes:
+#     - ./data:/data
+#   environment:
+#     - SQL_DSN=postgresql://root:请改密码@postgres:5432/new-api
+
+#  postgres:
+#    image: postgres:16-alpine
+#    container_name: new-api-postgres
+#    restart: unless-stopped
+#    environment:
+#      POSTGRES_USER: root
+#      POSTGRES_PASSWORD: 请改密码
+#      POSTGRES_DB: new-api
+#    volumes:
+#      - pg_data:/var/lib/postgresql/data
+
+# ---------------------------------------------------------------------- 可选：Redis
+#  redis:
+#    image: redis:7-alpine
+#    container_name: new-api-redis
+#    restart: unless-stopped
+#    command: ["redis-server", "--requirepass", "请改密码"]
+#    volumes:
+#      - redis_data:/data
+
+# volumes:
+#   pg_data:
+#   redis_data:
