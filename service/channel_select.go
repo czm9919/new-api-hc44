@@ -134,6 +134,14 @@ func smartRetryExclusion(param *RetryParam, group string) map[int]bool {
 	exclude := make(map[int]bool, len(used))
 	for _, idStr := range used {
 		if id, err := strconv.Atoi(idStr); err == nil {
+			// 多 Key 渠道仍有可用 Key 时不排除：本次失败只是它的一个 Key 失效，
+			// 重试应落到该渠道的下一个 Key（与原生优先级重试在多 Key 渠道上的
+			// 行为一致）；Key 全部失效时渠道会被自动禁用并移出候选，自然不再入选。
+			if common.MemoryCacheEnabled {
+				if channel, cacheErr := model.CacheGetChannel(id); cacheErr == nil && channel.ChannelInfo.IsMultiKey && channel.HasEnabledKey() {
+					continue
+				}
+			}
 			exclude[id] = true
 		}
 	}
@@ -178,6 +186,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				groupRetry = 0
 			}
 			priorityRetry := max(groupRetry-affinityRetryOffset, 0)
+			exclude := smartRetryExclusion(param, autoGroup)
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
 			channel, _ = model.GetRandomSatisfiedChannelEx(
@@ -185,8 +194,20 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				param.ModelName,
 				priorityRetry,
 				filters,
-				smartRetryExclusion(param, autoGroup),
+				exclude,
 			)
+			if channel == nil && exclude != nil {
+				// 排除后无候选（例如分组内仅剩已尝试过的渠道）时，回到不含排除
+				// 的候选集再选一次：单渠道场景下与上游「同渠道重试」语义一致，
+				// 多渠道场景不受影响（排除只会作用于其中已用过的渠道）。
+				channel, _ = model.GetRandomSatisfiedChannelEx(
+					autoGroup,
+					param.ModelName,
+					priorityRetry,
+					filters,
+					nil,
+				)
+			}
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -227,13 +248,24 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
+		exclude := smartRetryExclusion(param, param.TokenGroup)
 		channel, err = model.GetRandomSatisfiedChannelEx(
 			param.TokenGroup,
 			param.ModelName,
 			max(param.GetRetry()-affinityRetryOffset, 0),
 			filters,
-			smartRetryExclusion(param, param.TokenGroup),
+			exclude,
 		)
+		if channel == nil && err == nil && exclude != nil {
+			// 排除后无候选时回退到不含排除的候选集，与上游同渠道重试语义一致。
+			channel, err = model.GetRandomSatisfiedChannelEx(
+				param.TokenGroup,
+				param.ModelName,
+				max(param.GetRetry()-affinityRetryOffset, 0),
+				filters,
+				nil,
+			)
+		}
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

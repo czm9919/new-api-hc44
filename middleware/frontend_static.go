@@ -71,6 +71,8 @@ func ServeFrontendFiles(frontendFS static.ServeFileSystem) gin.HandlerFunc {
 			fileServer.ServeHTTP(c.Writer, c.Request)
 			return
 		}
+		// Stop the fallback handler chain: the compressed body replaces it.
+		c.Abort()
 
 		value, ok := cache.Load(urlPath)
 		if !ok {

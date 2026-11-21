@@ -606,14 +606,38 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
+	// 渠道密钥 AES-GCM 落库（v1.1.0 M1 · B03）：入库前封存，写库后把内存里的
+	// 对象恢复成明文，调用方拿到的 Key 仍然可用；库里的值变成 enc:v1: 前缀。
+	plainKey := channel.Key
+	if sealedKey, err := common.EncryptSecret(plainKey); err != nil {
+		return err
+	} else {
+		channel.Key = sealedKey
+	}
+	err := DB.Create(channel).Error
+	channel.Key = plainKey
 	if err != nil {
 		return err
 	}
 	defer BumpSyncTopic(SyncTopicChannels)
 	err = channel.AddAbilities(nil)
 	return err
+}
+
+// AfterFind 把落库的密钥解封回内存明文：所有经过 GORM 的读取路径（含缓存
+// 初始化、后台测试、中继取 Key）都自动获得明文。解密失败时保留原值并记
+// 错误日志——这通常意味着 CRYPTO_SECRET 被轮换，应当在日志里大声暴露而不是
+// 静默改写成垃圾数据。
+func (channel *Channel) AfterFind(tx *gorm.DB) error {
+	if channel.Key != "" && common.IsEncryptedSecret(channel.Key) {
+		plain, err := common.DecryptSecret(channel.Key)
+		if err != nil {
+			logger.LogError(context.Background(), common.LogText("channel key decrypt failed (channel_id=%d): %v", channel.Id, err))
+			return nil
+		}
+		channel.Key = plain
+	}
+	return nil
 }
 
 // Update writes an edited channel, all but its key: a key changes only through
@@ -845,6 +869,21 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 	}
 }
 
+// HasEnabledKey 报告渠道是否仍有可用 Key：非多 Key 渠道视为有一个；
+// 多 Key 渠道要求 MultiKeyStatusList 中仍有启用的 Key。
+// 供智能路由重试排除逻辑使用：多 Key 渠道仍有可用 Key 时不排除该渠道，
+// 重试应落到它的下一个 Key（与原生优先级重试在多 Key 渠道上的行为一致）。
+func (channel *Channel) HasEnabledKey() bool {
+	if !channel.ChannelInfo.IsMultiKey {
+		return true
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return false
+	}
+	return hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList)
+}
+
 func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 	for i := range keys {
 		if statusList == nil {
@@ -884,10 +923,13 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	defer pollingLock.Unlock()
 
 	if common.MemoryCacheEnabled {
+		println("DEBUGNX UpdateChannelStatus ch=", channelId, "usingKeySet=", usingKey != "", "status=", status)
 		channelCache, _ := CacheGetChannel(channelId)
 		if channelCache == nil {
+			println("DEBUGNX no cache entry")
 			return false
 		}
+		println("DEBUGNX cache IsMultiKey=", channelCache.ChannelInfo.IsMultiKey, "keys=", len(channelCache.GetKeys()), "cacheStatus=", channelCache.Status)
 		// A request failure must not replace an admin's manual disable;
 		// otherwise automatic recovery could re-enable the channel later.
 		if status == common.ChannelStatusAutoDisabled && channelCache.Status == common.ChannelStatusManuallyDisabled {
@@ -897,6 +939,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			beforeStatus := channelCache.Status
 			// 如果是多Key模式，更新缓存中的状态
 			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
+			println("DEBUGNX after multikey: status=", channelCache.Status, "list=", fmt.Sprint(channelCache.ChannelInfo.MultiKeyStatusList))
 			if beforeStatus != channelCache.Status {
 				CacheUpdateChannelStatus(channelId, channelCache.Status)
 			}

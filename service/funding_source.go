@@ -35,7 +35,8 @@ var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 type WalletFunding struct {
 	userId   int
 	consumed int // 实际预扣的用户额度
-	// useFreeQuota 本分组是否允许消耗免费额度（由 FreeQuotaAllowedGroups 白名单决定）。
+	// useFreeQuota 本次计费是否允许消耗免费额度（FreeQuotaAllowedGroups
+	// 分组白名单 + FreeQuotaAllowedModels 模型白名单同时放行才允许）。
 	// 预扣/补扣沿同一策略执行，避免预扣吃免费、补扣吃付费（或反之）的不一致。
 	useFreeQuota bool
 }

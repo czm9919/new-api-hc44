@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/prommetrics"
 
 	"github.com/bytedance/gopkg/util/gopool"
 )
@@ -511,6 +512,10 @@ func NewSystemTaskProgressReporter(task *model.SystemTask, runnerID string) func
 
 func failSystemTask(task *model.SystemTask, runnerID string, err error) {
 	logger.LogWarn(context.Background(), common.LogText("system task %s failed: %v", task.TaskID, err))
+	// 定时任务失败告警（v1.1.0 M1 · B72）：失败只落库没人看，同步计数 +
+	// 限频通知 root。
+	prommetrics.SystemTaskFailures.WithLabelValues(task.Type).Inc()
+	alertSystemTaskFailure(task, err)
 	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, nil, err.Error()); finishErr != nil {
 		logger.LogWarn(context.Background(), common.LogText("system task %s failed to save failure state: %v", task.TaskID, finishErr))
 	}

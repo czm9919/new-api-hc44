@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -826,14 +827,45 @@ type releasedAuditLog struct {
 
 func (releasedAuditLog) TableName() string { return "logs" }
 
+// closeSQLitePools releases every connection pool handed in, once per pool:
+// several gorm handles may wrap the same *sql.DB, and closing the same pool
+// twice is harmless but closing one still in use breaks the next subtest.
+func closeSQLitePools(dbs ...*gorm.DB) {
+	closed := make(map[any]struct{}, len(dbs))
+	for _, db := range dbs {
+		if db == nil {
+			continue
+		}
+		sqlDB, err := db.DB()
+		if err != nil || sqlDB == nil {
+			continue
+		}
+		if _, done := closed[sqlDB]; done {
+			continue
+		}
+		closed[sqlDB] = struct{}{}
+		_ = sqlDB.Close()
+	}
+}
+
 // External tests create a new database per case on a loopback-only disposable
 // instance. They never drop databases or tables supplied through an environment variable.
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 	t.Helper()
 	if kind == "sqlite" {
-		path := t.TempDir() + "/audit.db"
+		dir, err := os.MkdirTemp("", "newapi-audit-")
+		require.NoError(t, err)
+		path := filepath.Join(dir, "audit.db")
 		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 		require.NoError(t, err)
+		// Windows cannot unlink a file whose handle is still open: the pool this
+		// helper opens and every pool InitDB/InitLogDB later opens on the same
+		// file must be closed before the directory goes away, so the cleanup
+		// below owns the directory instead of t.TempDir.
+		t.Cleanup(func() {
+			closeSQLitePools(db, model.DB, model.LOG_DB)
+			_ = os.RemoveAll(dir)
+		})
 		return db, path
 	}
 	require.NotEmpty(t, dsn)

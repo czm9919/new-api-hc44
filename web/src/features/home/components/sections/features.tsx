@@ -46,7 +46,7 @@ export function Features(_props: FeaturesProps) {
         'Optimized network architecture ensures millisecond response times'
       ),
       span: 'md:col-span-2',
-      icon: <Zap className='size-4 text-blue-400' />,
+      icon: <Zap className='size-4 text-foreground/70' />,
       visual: (
         <>
           {/* 原来是 3 列等宽、居中的圆角块，铺满后像四个禁用态的输入框；
@@ -56,11 +56,11 @@ export function Features(_props: FeaturesProps) {
               (name) => (
                 <div
                   key={name}
-                  className='border-border/60 bg-muted/50 text-foreground/80 hover:border-blue-500/40 hover:bg-blue-500/5 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-300'
+                  className='border-border/60 bg-muted/50 text-foreground/80 hover:border-border hover:bg-muted/60 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-300'
                 >
                   <span
                     aria-hidden='true'
-                    className='size-1.5 shrink-0 rounded-full bg-blue-500/50'
+                    className='size-1.5 shrink-0 rounded-full bg-muted-foreground/50'
                   />
                   {name}
                 </div>
@@ -85,7 +85,7 @@ export function Features(_props: FeaturesProps) {
         'Enterprise-grade security with comprehensive permission management'
       ),
       span: 'md:col-span-1',
-      icon: <Shield className='size-4 text-emerald-400' />,
+      icon: <Shield className='size-4 text-foreground/70' />,
       visual: (
         // 单列卡片的高度由同行的高卡片撑开，光一个 64px 图标会留出大片空白；
         // 用一圈虚线外环把这块空间占住，同时让「校验通过」的语义更明显
@@ -93,14 +93,14 @@ export function Features(_props: FeaturesProps) {
           <div className='relative flex size-20 items-center justify-center'>
             <div
               aria-hidden='true'
-              className='absolute inset-0 rounded-full border border-dashed border-emerald-500/25'
+              className='absolute inset-0 rounded-full border border-dashed border-border'
             />
-            <div className='bg-background flex size-12 items-center justify-center rounded-xl border border-emerald-500/20'>
-              <Shield className='size-5 text-emerald-500/70' strokeWidth={1.5} />
+            <div className='bg-background flex size-12 items-center justify-center rounded-lg border border-border'>
+              <Shield className='size-5 text-foreground/70' strokeWidth={1.5} />
             </div>
             <div className='bg-background absolute top-0.5 right-0.5 flex size-4 items-center justify-center rounded-full'>
               <svg
-                className='size-3.5 text-emerald-500'
+                className='size-3.5 text-foreground/70'
                 fill='none'
                 viewBox='0 0 24 24'
                 stroke='currentColor'
@@ -123,7 +123,7 @@ export function Features(_props: FeaturesProps) {
       title: t('Global Coverage'),
       desc: t('Multi-region deployment for stable global access'),
       span: 'md:col-span-1',
-      icon: <Globe className='size-4 text-violet-400' />,
+      icon: <Globe className='size-4 text-foreground/70' />,
       visual: (
         <div className='mt-4 space-y-2'>
           {[t('Load Balancing'), t('Rate Limiting'), t('Cost Tracking')].map(
@@ -132,7 +132,7 @@ export function Features(_props: FeaturesProps) {
                 <div
                   className={`flex size-6 items-center justify-center rounded-full text-[10px] font-bold ${
                     i === 1
-                      ? 'border border-blue-500/30 bg-blue-500/20 text-blue-500'
+                      ? 'border-border bg-muted text-foreground border'
                       : 'border-border/40 bg-muted text-muted-foreground border'
                   }`}
                 >
@@ -152,7 +152,7 @@ export function Features(_props: FeaturesProps) {
       title: t('Developer Friendly'),
       desc: t('Compatible API routes for common AI application workflows'),
       span: 'md:col-span-2',
-      icon: <Code className='size-4 text-amber-400' />,
+      icon: <Code className='size-4 text-foreground/70' />,
       visual: (
         // 与 03 拼同一行时高度由 03 决定，用 flex-1 + content-center 把胶囊行
         // 在剩余空间里居中，避免全部空白堆在卡片底部
@@ -169,7 +169,7 @@ export function Features(_props: FeaturesProps) {
             ))}
           </div>
           <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
-            <Code className='size-3.5 text-blue-500' />
+            <Code className='size-3.5 text-foreground/70' />
             {t('Multi-protocol Compatible')}
           </div>
         </div>
@@ -215,7 +215,7 @@ export function Features(_props: FeaturesProps) {
         </AnimateInView>
 
         {/* Bento grid */}
-        <div className='border-border/40 bg-border/40 grid gap-px overflow-hidden rounded-xl border md:grid-cols-3'>
+        <div className='border-border/40 bg-border/40 grid gap-px overflow-hidden rounded-lg border md:grid-cols-3'>
           {features.map((f, i) => (
             <AnimateInView
               key={f.id}
@@ -246,7 +246,7 @@ export function Features(_props: FeaturesProps) {
               animation='fade-up'
               className='flex flex-col items-center text-center'
             >
-              <div className='text-muted-foreground border-border/50 bg-muted/30 group-hover:text-foreground mb-3 flex size-12 items-center justify-center rounded-xl border transition-colors'>
+              <div className='text-muted-foreground border-border/50 bg-muted/30 group-hover:text-foreground mb-3 flex size-12 items-center justify-center rounded-lg border transition-colors'>
                 {f.icon}
               </div>
               <h3 className='mb-1.5 text-sm font-semibold'>{f.title}</h3>

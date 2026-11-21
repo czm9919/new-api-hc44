@@ -90,6 +90,14 @@ func authHelper(c *gin.Context, minRole int) {
 		auditWriter = beginAdminAudit(c)
 	}
 
+	// API 请求签名防重放（v1.1.0 M1 · B144）：同样内聚在鉴权链路里，任何走
+	// AdminAuth/RootAuth 的 token 认证写请求都会校验，避免漏挂。放在认证之后，
+	// 只有确认有效的 token 才参与验签；拒绝的请求仍走 finishAdminAudit 留痕。
+	if minRole >= common.RoleAdminUser && !enforceRequestSignature(c) {
+		finishAdminAudit(c, auditWriter)
+		return
+	}
+
 	c.Next()
 
 	finishAdminAudit(c, auditWriter)
@@ -137,12 +145,35 @@ func UserAuth() func(c *gin.Context) {
 
 func AdminAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// 管理员 IP 白名单（v1.1.0 M1 · B75）：挂在角色判定之前，配置了
+		// 白名单时，来源不符的请求在鉴权阶段就被拒掉，不进入后续逻辑。
+		if networks := common.ParseCIDRList(common.AdminIpWhitelist); len(networks) > 0 {
+			if !common.IPInNetworks(c.ClientIP(), networks) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"code":    "ADMIN_IP_FORBIDDEN",
+					"message": "request source address is not in the admin IP whitelist",
+				})
+				return
+			}
+		}
 		authHelper(c, common.RoleAdminUser)
 	}
 }
 
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// 与 AdminAuth 相同的白名单检查：Root 是最高危入口，一并收口。
+		if networks := common.ParseCIDRList(common.AdminIpWhitelist); len(networks) > 0 {
+			if !common.IPInNetworks(c.ClientIP(), networks) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"code":    "ADMIN_IP_FORBIDDEN",
+					"message": "request source address is not in the admin IP whitelist",
+				})
+				return
+			}
+		}
 		authHelper(c, common.RoleRootUser)
 	}
 }

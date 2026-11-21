@@ -494,3 +494,80 @@ export type UpstreamRatiosResponse = {
     test_results: TestResult[]
   }
 }
+
+/** hc41：官方定价快照刷新结果（只影响价格榜，不改本站倍率）。 */
+export type OfficialPricingRefreshResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    fetched_at: number
+    /** hc42：内容最后一次真正变化的时间。 */
+    updated_at?: number
+    sources: string[]
+    counts: Record<string, number>
+    /** hc42：本次抓取失败、条目沿用自上一版快照的源。 */
+    carried?: string[]
+    /** hc42：内容指纹；与上次相同则 unchanged=true。 */
+    revision?: string
+    unchanged?: boolean
+    total: number
+  }
+}
+
+/** hc42：官方价快照的只读状态，管理端用来显示自动同步情况。 */
+export type OfficialPricingStatusResponse = {
+  success: boolean
+  data?: {
+    official_available: boolean
+    fetched_at?: number
+    updated_at?: number
+    age_seconds?: number
+    stale?: boolean
+    auto_sync?: boolean
+    sync_interval?: number
+    stale_after?: number
+    sources?: string[]
+    counts?: Record<string, number>
+    carried?: string[]
+    official_total?: number
+    source_state?: Record<
+      string,
+      { count: number; fetched_at: number; last_error?: string }
+    >
+  }
+}
+
+/** v1.1.0 M1 · B22 倍率变更 diff 预览 */
+export type RatioDiffPreviewRatioType = 'model' | 'completion' | 'group'
+
+export type RatioDiffPreviewRequest = {
+  ratio_type: RatioDiffPreviewRatioType
+  new_ratio: Record<string, number>
+}
+
+export type RatioDiffItem = {
+  name: string
+  old_ratio: number
+  new_ratio: number
+  used_quota: number
+  prompt_tokens: number
+  output_tokens: number
+  estimated_delta_quota: number
+}
+
+export type RatioDiffPreviewData = {
+  ratio_type: RatioDiffPreviewRatioType
+  total_entries: number
+  changed_models: number
+  days: number
+  before_quota: number
+  after_quota: number
+  delta_quota: number
+  items: RatioDiffItem[]
+}
+
+export type RatioDiffPreviewResponse = {
+  success: boolean
+  message: string
+  data: RatioDiffPreviewData
+}

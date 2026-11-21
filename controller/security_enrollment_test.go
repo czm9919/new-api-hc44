@@ -102,6 +102,11 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 		if err == nil {
 			_ = connection.Close()
 		}
+		// The audit database holds its own handle; Windows cannot unlink a file
+		// that is still open, so release it before TempDir cleanup runs.
+		if logConnection, logErr := logDB.DB(); logErr == nil {
+			_ = logConnection.Close()
+		}
 	})
 	password, err := common.Password2Hash("enrollment-password")
 	require.NoError(t, err)

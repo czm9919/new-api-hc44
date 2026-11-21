@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   MarketShareSection,
   ModelsSection,
+  PricingLeaderboardSection,
   PulseSection,
   RankingsHero,
 } from './components'
@@ -75,6 +76,9 @@ export function Rankings() {
         />
         <PageTransition className='relative mx-auto w-full max-w-[1280px] space-y-8 px-3 pt-16 pb-10 sm:px-6 sm:pt-20 sm:pb-12 xl:px-8'>
           <RankingsHero period={period} onPeriodChange={handlePeriodChange} />
+
+          {/* 价格榜（hc41）：只依赖本站定价，用量数据为空时也照常展示。 */}
+          <PricingLeaderboardSection />
 
           {rankingsQuery.isLoading ? (
             <RankingsLoading />

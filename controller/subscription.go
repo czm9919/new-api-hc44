@@ -19,6 +19,61 @@ type SubscriptionPlanDTO struct {
 	Plan model.SubscriptionPlan `json:"plan"`
 }
 
+// PublicSubscriptionPlan 是公开售卖页（v1.1.0 M1 · B20 `/buy`）展示用的
+// 精简套餐结构：去掉支付渠道商品 id、升降级分组等运营内部字段。
+type PublicSubscriptionPlan struct {
+	Id               int     `json:"id"`
+	Title            string  `json:"title"`
+	Subtitle         string  `json:"subtitle"`
+	PriceAmount      float64 `json:"price_amount"`
+	Currency         string  `json:"currency"`
+	DurationUnit     string  `json:"duration_unit"`
+	DurationValue    int     `json:"duration_value"`
+	CustomSeconds    int64   `json:"custom_seconds"`
+	TotalAmount      int64   `json:"total_amount"`
+	QuotaResetPeriod string  `json:"quota_reset_period"`
+	AllowBalancePay  bool    `json:"allow_balance_pay"`
+	SortOrder        int     `json:"sort_order"`
+}
+
+// GetPublicSubscriptionPlans 供未登录访客读取可售套餐。只返回 enabled 套餐，
+// 且同样受支付合规确认门控：未确认合规时返回空列表，避免提前露出商品。
+func GetPublicSubscriptionPlans(c *gin.Context) {
+	if !operation_setting.IsPaymentComplianceConfirmed() {
+		common.ApiSuccess(c, []PublicSubscriptionPlan{})
+		return
+	}
+
+	var plans []model.SubscriptionPlan
+	if err := model.DB.Where("enabled = ?", true).Order("sort_order desc, id desc").Find(&plans).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := make([]PublicSubscriptionPlan, 0, len(plans))
+	for _, p := range plans {
+		p.NormalizeDefaults()
+		allowBalancePay := true
+		if p.AllowBalancePay != nil {
+			allowBalancePay = *p.AllowBalancePay
+		}
+		result = append(result, PublicSubscriptionPlan{
+			Id:               p.Id,
+			Title:            p.Title,
+			Subtitle:         p.Subtitle,
+			PriceAmount:      p.PriceAmount,
+			Currency:         p.Currency,
+			DurationUnit:     p.DurationUnit,
+			DurationValue:    p.DurationValue,
+			CustomSeconds:    p.CustomSeconds,
+			TotalAmount:      p.TotalAmount,
+			QuotaResetPeriod: p.QuotaResetPeriod,
+			AllowBalancePay:  allowBalancePay,
+			SortOrder:        p.SortOrder,
+		})
+	}
+	common.ApiSuccess(c, result)
+}
+
 type BillingPreferenceRequest struct {
 	BillingPreference string `json:"billing_preference"`
 }

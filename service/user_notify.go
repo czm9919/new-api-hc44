@@ -81,6 +81,9 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 		return fmt.Errorf("notification limit exceeded for user %d with type %s", userId, notifyType)
 	}
 
+	// 站内收件箱同步落库（hc31 · B211）：外部渠道缺失或发送失败都不会丢通知。
+	PushInboxNotificationFromDTO(userId, data)
+
 	switch notifyType {
 	case dto.NotifyTypeEmail:
 		// 优先使用设置中的通知邮箱，如果为空则使用用户的默认邮箱

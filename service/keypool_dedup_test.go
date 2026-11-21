@@ -19,13 +19,13 @@ func setupPoolKeyRecordDB(t *testing.T) {
 // 账号标识归一化：大小写、首尾空白、内部空白都不应造成「同一账号被当成两个」。
 func TestNormalizePoolAccountKey(t *testing.T) {
 	cases := map[string]string{
-		"":                       "",
-		"  ":                     "",
-		"Zhang@Gmail.com":        "zhang@gmail.com",
-		" zhang@gmail.com ":      "zhang@gmail.com",
-		"zhang@ gmail.com":       "zhang@gmail.com",
-		"ZHANG@GMAIL.COM   ":     "zhang@gmail.com",
-		"Acme Team / zhangsan":   "acmeteam/zhangsan",
+		"":                     "",
+		"  ":                   "",
+		"Zhang@Gmail.com":      "zhang@gmail.com",
+		" zhang@gmail.com ":    "zhang@gmail.com",
+		"zhang@ gmail.com":     "zhang@gmail.com",
+		"ZHANG@GMAIL.COM   ":   "zhang@gmail.com",
+		"Acme Team / zhangsan": "acmeteam/zhangsan",
 	}
 	for input, want := range cases {
 		assert.Equal(t, want, model.NormalizePoolAccountKey(input), "input=%q", input)

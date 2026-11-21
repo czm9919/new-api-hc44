@@ -168,6 +168,18 @@ it('blocks a range longer than the configured limit before any request', async (
 it('downloads the streamed logs of the current filters as CSV', async () => {
   const fetchSpy = mockExportResponse([
     {
+      export_watermark: {
+        version: 1,
+        exporter_id: 7,
+        username: 'alice',
+        role: 1,
+        exported_at: 1760000001,
+        scope: 'self',
+        nonce: 'n'.repeat(32),
+        signature: 's'.repeat(64),
+      },
+    },
+    {
       id: 1,
       created_at: 1760000000,
       type: 2,
@@ -214,9 +226,13 @@ it('downloads the streamed logs of the current filters as CSV', async () => {
   const bytes = new Uint8Array(await file.arrayBuffer())
   expect(bytes.subarray(0, 3)).toEqual(new Uint8Array([0xef, 0xbb, 0xbf]))
   const rows = (await file.text()).trimEnd().split('\r\n')
-  expect(rows).toHaveLength(3)
+  expect(rows).toHaveLength(4)
   expect(rows[1]).toContain('"req-2"')
   expect(rows[2]).toContain('"req-1"')
+  // The watermark stays out of the data rows and closes the file instead.
+  expect(rows[3]).toContain('"Watermark"')
+  expect(rows[3]).toContain('"alice (#7)"')
+  expect(rows[3]).toContain(`"${'n'.repeat(32)} ${'s'.repeat(64)}"`)
   expect(success).toHaveBeenCalledWith('Exported 2 logs')
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 })

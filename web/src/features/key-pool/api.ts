@@ -60,6 +60,11 @@ export interface KeyPoolSettings {
   auto_bind_models: boolean
   /** 免费额度（签到奖励）可用分组白名单，逗号分隔；空表示不限制。 */
   free_quota_allowed_groups: string
+  /**
+   * 免费额度可用模型白名单，逗号分隔，支持 `prefix*` 通配；空表示不限制。
+   * 与分组白名单是「同时满足」关系：分组合格但模型不在白名单内时仍扣付费余额。
+   */
+  free_quota_allowed_models: string
   /** 单模型自动检查+自动下架开关。 */
   model_auto_check_enabled: boolean
 }

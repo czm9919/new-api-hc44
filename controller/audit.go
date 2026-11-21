@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -46,6 +47,10 @@ var auditContentTemplates = map[string]string{
 	"user.passkey_delete":       "Deleted a passkey",
 	"user.reset_passkey":        "Reset the user passkey",
 	"option.update":             "Updated system setting ${key}",
+	"audit.chain.verify":        "Verified audit log hash chain: checked ${checked}, breaks ${breaks}, legacy ${legacy}",
+
+	"log.export":     "Exported ${count} own logs (scope ${scope}, watermark ${watermark})",
+	"log.export_all": "Exported ${count} logs of all users (watermark ${watermark})",
 
 	"option.passkey_domains":           "Updated Passkey domains: removed ${domains}; affected ${known}; unknown ${unknown}",
 	"option.passkey_domains_confirmed": "Confirmed removal of Passkey domains: ${domains}; affected ${known}; unknown ${unknown}",
@@ -202,4 +207,32 @@ func tokenBatchAuditParams(c *gin.Context, ids []int) model.AuditFields {
 		params["requested_ids_truncated"] = true
 	}
 	return params
+}
+
+// VerifyAuditLogChain replays the audit hash chain (v1.1.0 M1 · B78) and
+// reports rows whose content hash or previous-hash link no longer matches.
+// An empty breaks list proves that every stored audit row is intact: editing
+// or deleting any row since the chain started would surface here.
+func VerifyAuditLogChain(c *gin.Context) {
+	limit := 0
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 1_000_000 {
+			common.ApiErrorMsg(c, "Invalid audit chain limit")
+			return
+		}
+		limit = parsed
+	}
+	report, err := model.VerifyAuditChain(limit)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "audit.chain.verify", map[string]any{
+		"checked": report.Checked,
+		"breaks":  len(report.Breaks),
+		"legacy":  report.LegacyRows,
+		"limit":   limit,
+	})
+	common.ApiSuccess(c, report)
 }

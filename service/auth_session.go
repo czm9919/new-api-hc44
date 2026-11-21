@@ -15,6 +15,47 @@ import (
 
 const RefreshCookieName = "new_api_refresh"
 
+// HostPrefixedRefreshCookieName is the Refresh Cookie name used whenever the
+// deployment runs over HTTPS (v1.1.0 M1 · B141).
+//
+// The "__Host-" prefix is enforced by the browser, not by this server: a cookie
+// carrying it is only accepted when it is Secure, has Path=/ and carries no
+// Domain attribute. That makes it impossible for a sibling subdomain, or for a
+// response that forgot one of those attributes, to plant or overwrite the
+// refresh credential — a property the plain name cannot offer.
+//
+// It cannot be applied unconditionally: browsers reject "__Host-" over plain
+// HTTP, so the legacy name stays in use for local HTTP development. Readers
+// accept both names, which also keeps sessions alive across the upgrade.
+const HostPrefixedRefreshCookieName = "__Host-new_api_refresh"
+
+// legacyRefreshCookiePath is the path the cookie used before the prefix, and
+// therefore the path a stale browser copy still carries.
+const legacyRefreshCookiePath = "/api/user/auth"
+
+// refreshCookieNameAndPath returns the name and path the server should write.
+func refreshCookieNameAndPath() (string, string) {
+	if common.SessionCookieSecure {
+		return HostPrefixedRefreshCookieName, "/"
+	}
+	return RefreshCookieName, legacyRefreshCookiePath
+}
+
+// ReadRefreshCookie returns the raw refresh token from whichever cookie name
+// the browser holds. Two names are read so the prefixed cookie can be rolled
+// out without logging every user out.
+func ReadRefreshCookie(c *gin.Context) (string, bool) {
+	if common.SessionCookieSecure {
+		if value, err := c.Cookie(HostPrefixedRefreshCookieName); err == nil && value != "" {
+			return value, true
+		}
+	}
+	if value, err := c.Cookie(RefreshCookieName); err == nil && value != "" {
+		return value, true
+	}
+	return "", false
+}
+
 // SessionHintCookieName is the script-readable companion to RefreshCookieName.
 // See writeSessionHintCookie for why it exists and what it is not.
 const SessionHintCookieName = "new_api_has_session"
@@ -330,24 +371,58 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 		}
 	}
 	maxAge := max(int(time.Until(expiresAt)/time.Second), 1)
+	name, path := refreshCookieNameAndPath()
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     RefreshCookieName,
+		Name:     name,
 		Value:    rawToken,
-		Path:     "/api/user/auth",
+		Path:     path,
 		MaxAge:   maxAge,
 		Expires:  expiresAt,
 		HttpOnly: true,
 		Secure:   common.SessionCookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
+	clearLegacyRefreshCookie(c)
 	writeSessionHintCookie(c, maxAge, expiresAt)
 }
 
-func ClearRefreshCookie(c *gin.Context) {
+// clearLegacyRefreshCookie removes the pre-prefix cookie so an upgraded
+// deployment does not leave a second, weaker copy of the credential in the
+// browser. It is a no-op while the legacy name is still the active one.
+func clearLegacyRefreshCookie(c *gin.Context) {
+	if !common.SessionCookieSecure {
+		return
+	}
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     RefreshCookieName,
 		Value:    "",
-		Path:     "/api/user/auth",
+		Path:     legacyRefreshCookiePath,
+		MaxAge:   -1,
+		Expires:  time.Unix(1, 0),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func ClearRefreshCookie(c *gin.Context) {
+	name, path := refreshCookieNameAndPath()
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     path,
+		MaxAge:   -1,
+		Expires:  time.Unix(1, 0),
+		HttpOnly: true,
+		Secure:   common.SessionCookieSecure,
+		SameSite: http.SameSiteStrictMode,
+	})
+	// Both copies must go: a browser that still holds the legacy cookie would
+	// otherwise keep refreshing a session the user just ended.
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     RefreshCookieName,
+		Value:    "",
+		Path:     legacyRefreshCookiePath,
 		MaxAge:   -1,
 		Expires:  time.Unix(1, 0),
 		HttpOnly: true,

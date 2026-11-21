@@ -60,6 +60,18 @@ func TestChannelStatusRoutesRegisterWithoutConflict(t *testing.T) {
 	})
 }
 
+// hc35 · B13：健康总览只读，需渠道读权限；静态段 /health 与 /:id 同级共存不冲突。
+func TestChannelHealthOverviewRouteUsesReadPermission(t *testing.T) {
+	assertChannelRoutePermission(t, http.MethodGet, "/health/overview", authz.ChannelRead, controller.GetChannelHealthOverview)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	registerChannelRoutes(engine.Group("/api"))
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/channel/health/overview", nil))
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
 func assertChannelRoutePermission(t *testing.T, method string, path string, permission authz.Permission, handler any) {
 	t.Helper()
 	for _, route := range channelPermissionRoutes {

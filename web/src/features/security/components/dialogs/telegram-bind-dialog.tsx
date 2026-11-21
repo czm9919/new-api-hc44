@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TELEGRAM_BIND_RESULT_MESSAGE } from '@/features/auth/constants'
 import { startTelegramBind } from '@/features/profile/api'
+import { applyExternalScriptIntegrity } from '@/lib/external-script'
 import {
   createServerError,
   getServerErrorMessageKey,
@@ -129,6 +130,7 @@ export function TelegramBindDialog({
     const script = document.createElement('script')
     script.async = true
     script.src = 'https://telegram.org/js/telegram-widget.js?22'
+    applyExternalScriptIntegrity(script, script.src)
     script.setAttribute('data-telegram-login', botName.replace(/^@/, ''))
     script.setAttribute('data-size', 'large')
     script.setAttribute('data-auth-url', callbackUrl)

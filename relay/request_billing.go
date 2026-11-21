@@ -42,6 +42,13 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		return rnErr
 	}
 
+	// 每日额度护栏（hc45）：在预扣费之前拦，被拒的请求不占渠道、不扣额度。
+	// 超限用 429 而不是 403——客户端据此知道「明天再来」比「你没权限」更准确。
+	if dailyErr := service.CheckDailyQuota(info.UserId, info.UsingGroup); dailyErr != nil {
+		logger.LogInfo(c, common.LogText("model %s rejected by daily quota limit: %s", info.OriginModelName, dailyErr.Error()))
+		return types.NewErrorWithStatusCode(dailyErr, types.ErrorCodeInsufficientUserQuota, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+	}
+
 	if setting.VGuardEnabled && info.Request != nil {
 		if vguardErr := service.VGuardGate(c, info); vguardErr != nil {
 			service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(types.ErrorCodeSensitiveWordsDetected), ErrorSource: "local", Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})

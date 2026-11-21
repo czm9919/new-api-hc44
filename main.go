@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"html"
 	"log"
 	"net"
 	"net/http"
@@ -52,6 +53,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	// B06：ldflags 没注入版本号时回落到编译期 embed 的 VERSION 文件。
+	// 必须在任何日志/接口暴露版本号之前执行。
+	applyEmbeddedVersion()
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
@@ -150,6 +154,10 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
+	// 官方定价自动同步（hc42）：按 OFFICIAL_PRICING_SYNC_INTERVAL 周期拉官方价目表，
+	// 落成快照供 /rankings 价格榜使用。间隔为 0 时退化成只靠管理端手动刷新。
+	controller.StartOfficialPricingAutoSync()
+
 	// CHANNEL_UPDATE_FREQUENCY schedules the update of all balances, a system
 	// task registered below.
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
@@ -169,6 +177,9 @@ func main() {
 
 	// 号池「每日自动赠送号池余额」定时任务
 	service.StartKeyPoolDailyGiftTask()
+
+	// 用量异常提醒任务（B105）：当日消耗远超近几日日均时通知用户
+	service.StartUsageAlertTask()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
@@ -200,6 +211,14 @@ func main() {
 		model.InitBatchUpdater()
 	}
 
+	// 消费日志异步批量写（v1.1.0 M1 · B09）：DB 已就绪，起后台 worker。
+	// 不启动时 RecordConsumeLog 保持同步写，单元测试行为不变。
+	model.StartConsumeLogWriter()
+
+	// 基础监控告警（v1.1.0 M1 · B73）：渠道失败率 / 磁盘 / 内存巡检，
+	// 命中阈值时限频通知 root。
+	service.StartMonitorAlerts()
+
 	host := os.Getenv("HOST")
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		gopool.Go(func() {
@@ -224,6 +243,13 @@ func main() {
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
+	// Prometheus 指标采集（v1.1.0 M1 · B08）：越靠前挂越能覆盖全量出口，
+	// 但必须在 RequestId 之后，日志里 request_id 与指标口径才对得上。
+	server.Use(middleware.MetricsRecorder())
+	// 安全基线（v1.1.0 M1 · B01/B139）：统一响应头 + 每请求 CSP nonce。
+	// 放在 RequestId 之后、其余中间件之前，保证任何出口路径（含 404/panic）
+	// 都带着完整的安全头。
+	server.Use(middleware.SecurityHeaders())
 	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
 	middleware.SetUpLogger(server)
@@ -271,9 +297,24 @@ func main() {
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
 	}
+	// 排空消费日志异步队列（v1.1.0 M1 · B09）：必须在进程退出前完成，
+	// 否则队列里最后一批请求的账务日志会丢。
+	model.StopConsumeLogWriter(30 * time.Second)
+	// 停止基础监控巡检（v1.1.0 M1 · B73）。
+	service.StopMonitorAlerts(5 * time.Second)
 	common.SysLog(common.LogText("server exited"))
 }
 
+// analyticsScriptAttr 转义属性值，防止环境变量里的引号提前闭合标签注入脚本。
+func analyticsScriptAttr(value string) string {
+	return html.EscapeString(value)
+}
+
+// InjectUmamiAnalytics also honours UMAMI_SCRIPT_INTEGRITY (v1.1.0 M1 · B140):
+// setting it to a `sha384-...` digest turns on Subresource Integrity for the
+// cross-domain analytics script, so a compromised CDN cannot run code inside a
+// logged-in dashboard session. crossorigin="anonymous" additionally keeps the
+// request from carrying dashboard cookies to the analytics origin.
 func InjectUmamiAnalytics() {
 	analyticsInjectBuilder := &strings.Builder{}
 	if os.Getenv("UMAMI_WEBSITE_ID") != "" {
@@ -283,10 +324,18 @@ func InjectUmamiAnalytics() {
 			umamiScriptURL = "https://analytics.umami.is/script.js"
 		}
 		analyticsInjectBuilder.WriteString("<script defer src=\"")
-		analyticsInjectBuilder.WriteString(umamiScriptURL)
+		analyticsInjectBuilder.WriteString(analyticsScriptAttr(umamiScriptURL))
 		analyticsInjectBuilder.WriteString("\" data-website-id=\"")
-		analyticsInjectBuilder.WriteString(umamiSiteID)
-		analyticsInjectBuilder.WriteString("\"></script>")
+		analyticsInjectBuilder.WriteString(analyticsScriptAttr(umamiSiteID))
+		analyticsInjectBuilder.WriteString("\"")
+		if umamiIntegrity := os.Getenv("UMAMI_SCRIPT_INTEGRITY"); umamiIntegrity != "" {
+			// SRI only takes effect in CORS mode, so the two attributes travel
+			// together; absent a hash the script keeps its original load mode.
+			analyticsInjectBuilder.WriteString(" crossorigin=\"anonymous\" integrity=\"")
+			analyticsInjectBuilder.WriteString(analyticsScriptAttr(umamiIntegrity))
+			analyticsInjectBuilder.WriteString("\"")
+		}
+		analyticsInjectBuilder.WriteString("></script>")
 	}
 	analyticsInjectBuilder.WriteString("<!--Umami QuantumNous-->\n")
 	analyticsInject := []byte(analyticsInjectBuilder.String())
@@ -294,20 +343,27 @@ func InjectUmamiAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
+// InjectGoogleAnalytics honours GOOGLE_ANALYTICS_INTEGRITY the same way (B140).
 func InjectGoogleAnalytics() {
 	analyticsInjectBuilder := &strings.Builder{}
 	if os.Getenv("GOOGLE_ANALYTICS_ID") != "" {
 		gaID := os.Getenv("GOOGLE_ANALYTICS_ID")
 		// Google Analytics 4 (gtag.js)
 		analyticsInjectBuilder.WriteString("<script async src=\"https://www.googletagmanager.com/gtag/js?id=")
-		analyticsInjectBuilder.WriteString(gaID)
-		analyticsInjectBuilder.WriteString("\"></script>")
+		analyticsInjectBuilder.WriteString(analyticsScriptAttr(gaID))
+		analyticsInjectBuilder.WriteString("\" crossorigin=\"anonymous\"")
+		if gaIntegrity := os.Getenv("GOOGLE_ANALYTICS_INTEGRITY"); gaIntegrity != "" {
+			analyticsInjectBuilder.WriteString(" integrity=\"")
+			analyticsInjectBuilder.WriteString(analyticsScriptAttr(gaIntegrity))
+			analyticsInjectBuilder.WriteString("\"")
+		}
+		analyticsInjectBuilder.WriteString("></script>")
 		analyticsInjectBuilder.WriteString("<script>")
 		analyticsInjectBuilder.WriteString("window.dataLayer = window.dataLayer || [];")
 		analyticsInjectBuilder.WriteString("function gtag(){dataLayer.push(arguments);}")
 		analyticsInjectBuilder.WriteString("gtag('js', new Date());")
 		analyticsInjectBuilder.WriteString("gtag('config', '")
-		analyticsInjectBuilder.WriteString(gaID)
+		analyticsInjectBuilder.WriteString(analyticsScriptAttr(gaID))
 		analyticsInjectBuilder.WriteString("');")
 		analyticsInjectBuilder.WriteString("</script>")
 	}

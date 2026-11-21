@@ -197,6 +197,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer stopKeepAlive()
 	}
 
+	// QQ 门禁（v1.1.0 M2）：免费模型/免费级 key 需要先绑定 QQ（option
+	// qq_require_for_free，默认开启）。放在计费之前，被拒的请求不预扣额度，
+	// 也不会消耗上游渠道。
+	if qqErr := service.EnsureQQBoundForFreeUsage(relayInfo.UserId, relayTokenForQQGate(relayInfo), relayInfo.UsingGroup, relayInfo.GetBillingModelName()); qqErr != nil {
+		status := http.StatusForbidden
+		if errors.Is(qqErr, service.ErrQQBindRequiredForFree) {
+			newAPIError = types.NewErrorWithStatusCode(qqErr, types.ErrorCodeAccessDenied, status, types.ErrOptionWithSkipRetry())
+		} else {
+			newAPIError = types.NewError(qqErr, types.ErrorCodeAccessDenied)
+		}
+		return
+	}
+
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
 	}
@@ -1114,4 +1127,17 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		return retry
 	}
 	return stop
+}
+
+// relayTokenForQQGate 取本次请求的 token 对象（判断是否免费级 key）。
+// 读失败时返回 nil：门禁仍按「分组+模型白名单」判定，不会因此放行全部请求。
+func relayTokenForQQGate(relayInfo *relaycommon.RelayInfo) *model.Token {
+	if relayInfo == nil || relayInfo.TokenId <= 0 {
+		return nil
+	}
+	token, err := model.GetTokenById(relayInfo.TokenId)
+	if err != nil {
+		return nil
+	}
+	return token
 }

@@ -292,25 +292,27 @@ For commercial licensing, please contact support@quantumnous.com
     background-image: radial-gradient(var(--tw-gradient-stops));
   }
 
-  /* Glass morphism effects - matching Launch UI template */
+  /* Flat surface tiers. The legacy `glass-*` names are kept as aliases so
+   * existing markup keeps working, but every tier is now a plain card
+   * surface with a hairline border — no gradients, no translucency. */
   .glass-1 {
-    @apply border-border from-card/80 to-card/40 dark:border-border/10 dark:border-b-border/5 dark:border-t-border/20 dark:from-card/5 dark:to-card/0 border bg-linear-to-b;
+    @apply border-border bg-card border;
   }
 
   .glass-2 {
-    @apply border-border from-card/100 to-card/80 dark:border-border/10 dark:border-b-border/5 dark:border-t-border/20 dark:from-card/10 dark:to-card/5 border bg-linear-to-b;
+    @apply border-border bg-card border;
   }
 
   .glass-3 {
-    @apply border-border from-card/30 to-card/20 dark:border-border/10 dark:border-t-border/20 dark:border-b-border/5 dark:from-primary/5 dark:to-primary/2 border bg-linear-to-b;
+    @apply border-border bg-card border;
   }
 
   .glass-4 {
-    @apply border-border border-b-input/90 from-card/60 to-card/20 dark:border-border/10 dark:border-t-border/30 dark:from-primary/10 dark:to-primary/5 border bg-linear-to-b dark:border-b-0;
+    @apply border-border bg-card border;
   }
 
   .glass-5 {
-    @apply border-border border-b-input from-card/100 to-card/20 dark:border-border/10 dark:border-t-border/30 dark:from-primary/15 dark:to-primary/5 border bg-linear-to-b dark:border-b-0;
+    @apply border-border bg-card border;
   }
 
   /* Fade effects - matching Launch UI template */
@@ -449,8 +451,7 @@ For commercial licensing, please contact support@quantumnous.com
   .animate-appear,
   .animate-appear-zoom,
   .animate-scroll-up,
-  .animate-scroll-down,
-  [data-slot='table'] tbody tr {
+  .animate-scroll-down {
     animation: none !important;
     opacity: 1;
     transform: none;
@@ -557,78 +558,22 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
-/* Micro-interactions — Vercel-style subtle hover/active feedback */
+/* Micro-interactions — flat feedback only.
+ * Cards never lift or cast shadows; hover is expressed by a one-step surface
+ * change, buttons never translate on press (color does the work). */
 @media (prefers-reduced-motion: no-preference) {
   [data-slot='card']:not([data-card-hover='false']) {
-    transition:
-      transform 150ms ease,
-      box-shadow 150ms ease;
+    transition: background-color 140ms ease;
   }
 
-  @media (min-width: 641px) {
-    [data-slot='card']:not([data-card-hover='false']):hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgb(0 0 0 / 0.06);
-    }
-
-    .dark [data-slot='card']:not([data-card-hover='false']):hover {
-      box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
-    }
-  }
-
-  button:not(:disabled):active,
-  [role='button']:not(:disabled):active {
-    transform: scale(0.98);
+  [data-slot='card']:not([data-card-hover='false'])[data-interactive='true']:hover,
+  a [data-slot='card']:hover,
+  button [data-slot='card']:hover {
+    background-color: color-mix(in oklch, var(--foreground) 2%, var(--card));
   }
 
   [data-slot='table'] tr {
     transition: background-color 120ms ease;
-  }
-
-  /* Only fill the entrance delay; completed animations must release transform/opacity. */
-  [data-slot='table'] tbody tr {
-    animation: tableRowEnter 0.2s cubic-bezier(0.33, 1, 0.68, 1) backwards;
-  }
-  [data-slot='table'] tbody tr:nth-child(2) {
-    animation-delay: 25ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(3) {
-    animation-delay: 50ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(4) {
-    animation-delay: 75ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(5) {
-    animation-delay: 100ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(6) {
-    animation-delay: 125ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(7) {
-    animation-delay: 150ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(8) {
-    animation-delay: 175ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(9) {
-    animation-delay: 200ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(10) {
-    animation-delay: 225ms;
-  }
-  [data-slot='table'] tbody tr:nth-child(n + 11) {
-    animation-delay: 250ms;
-  }
-}
-
-@keyframes tableRowEnter {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 

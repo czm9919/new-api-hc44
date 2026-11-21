@@ -337,6 +337,20 @@ func awaitH2ServerResult(t *testing.T, resultCh <-chan h2ServerResult) h2ServerR
 	}
 }
 
+// drainH2Connection 在断开前留出一段窗口：读走客户端可能仍在发送的帧，
+// 直到对端关闭或窗口耗尽。目的是确保客户端先处理完流级 RST_STREAM，
+// 而不是被连接级 abort 抢先，见 runResetOnFirstStreamServer 的说明。
+func drainH2Connection(conn net.Conn) {
+	const grace = 300 * time.Millisecond
+	_ = conn.SetReadDeadline(time.Now().Add(grace))
+	buf := make([]byte, 512)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
 // runResetOnFirstStreamServer speaks just enough raw HTTP/2 to emulate an
 // upstream that accepts the first request, waits until the request body has
 // been fully written, and then resets the stream with REFUSED_STREAM (the
@@ -372,6 +386,12 @@ func runResetOnFirstStreamServer(ln net.Listener, expectRetry bool) <-chan h2Ser
 					return
 				}
 				if !expectRetry {
+					// Windows 上如果紧接着 conn.Close()，socket 里残留的
+					// 未读帧会让 close 触发 TCP RST，客户端读循环先看到
+					// 连接级 abort（wsarecv），覆盖掉流级 RST_STREAM，
+					// 于是报的是连接错误而不是「cannot retry err」。
+					// 保持连接短暂存活，让客户端先处理完 REFUSED_STREAM。
+					drainH2Connection(conn)
 					break attempts
 				}
 				continue
@@ -380,6 +400,8 @@ func runResetOnFirstStreamServer(ln net.Listener, expectRetry bool) <-chan h2Ser
 			if err := writeH2TestResponse(framer, streamID); err != nil {
 				res.err = err
 			}
+			// 成功响应同样先 drain 再交给 deferred close，理由同上。
+			drainH2Connection(conn)
 			return
 		}
 	}()
@@ -409,15 +431,24 @@ func runGoAwayAfterFirstRequestServer(ln net.Listener) <-chan h2ServerResult {
 
 			if attempt == 0 {
 				err = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
-				conn.Close()
 				if err != nil {
+					conn.Close()
 					res.err = err
 					return
 				}
+				// 同 runResetOnFirstStreamServer：先让客户端处理完 GOAWAY
+				// 再断开，否则 Windows 上 close 触发的 TCP RST 会把
+				// 「重试新连接」变成连接级错误。
+				drainH2Connection(conn)
+				conn.Close()
 				continue
 			}
 
 			err = writeH2TestResponse(framer, streamID)
+			// 写完响应后同样先 drain 再关：客户端可能还没读走响应帧，
+			// 直接 close 在 Windows 上会以 TCP RST 收场，把成功的响应
+			// 变成连接级错误（wsarecv）。
+			drainH2Connection(conn)
 			conn.Close()
 			if err != nil {
 				res.err = err

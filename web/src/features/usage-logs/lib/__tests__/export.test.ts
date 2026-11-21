@@ -20,7 +20,13 @@ import { createInstance } from 'i18next'
 import { describe, expect, test } from 'vitest'
 
 import type { UsageLog } from '../../data/schema'
-import { getLogCsvHeader, getLogCsvRow, toCsvLine } from '../export'
+import type { ExportWatermark } from '../../api'
+import {
+  getLogCsvHeader,
+  getLogCsvRow,
+  getLogCsvWatermarkRow,
+  toCsvLine,
+} from '../export'
 
 const consumeLog: UsageLog = {
   id: 1,
@@ -64,6 +70,9 @@ async function chineseTranslator() {
           'Top-up': '充值',
           Yes: '是',
           'Recharged {{amount}}': '充值 {{amount}}',
+          Watermark: '水印',
+          'All users': '全部用户',
+          'Own logs': '个人日志',
         },
       },
     },
@@ -161,5 +170,31 @@ describe('usage log CSV export', () => {
     expect(
       toCsvLine(['=HYPERLINK("x")', '-12.5', '+cmd', 'a"b', 'two\nlines'])
     ).toBe(`"'=HYPERLINK(""x"")","-12.5","'+cmd","a""b","two\nlines"\r\n`)
+  })
+
+  test('watermark row names the exporter, the time and the signed nonce', async () => {
+    const t = await chineseTranslator()
+    const watermark: ExportWatermark = {
+      version: 1,
+      exporter_id: 3,
+      username: 'admin',
+      role: 10,
+      exported_at: new Date(2026, 9, 12, 8, 30, 5).getTime() / 1000,
+      scope: 'all',
+      nonce: 'a'.repeat(32),
+      signature: 'b'.repeat(64),
+    }
+
+    const row = getLogCsvWatermarkRow(watermark, t)
+    expect(row[0]).toBe('水印')
+    expect(row.slice(1)).toEqual([
+      'admin (#3)',
+      '2026-10-12 08:30:05',
+      '全部用户',
+      `${'a'.repeat(32)} ${'b'.repeat(64)}`,
+    ])
+
+    const own = getLogCsvWatermarkRow({ ...watermark, scope: 'self' }, t)
+    expect(own[3]).toBe('个人日志')
   })
 })

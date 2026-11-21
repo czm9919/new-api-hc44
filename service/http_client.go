@@ -478,3 +478,26 @@ func ResetProxyClientCache() {
 func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 	return GetHttpClientWithProxy(proxyURL)
 }
+
+// ReloadRelayHTTPClient 在运维台热更新上游超时（B11：RelayTimeout /
+// RelayResponseHeaderTimeout）后重建所有缓存的出站客户端。
+//
+// 为什么需要它：relay 客户端按 proxy/policy 缓存复用，common.RelayTimeout 与
+// common.RelayResponseHeaderTimeout 是在 newRelayHTTPClient /
+// newProtectedFetchHTTPClient 构造时一次性烘进 client.Timeout 和
+// transport.ResponseHeaderTimeout 的——只改全局变量，已缓存的客户端不会感知，
+// 新超时要等重启才生效。这里复用 ResetProxyClientCache 清掉非默认缓存并关闭
+// 空闲连接，再重建默认直连客户端与受保护抓取客户端。
+//
+// 并发语义：GetHttpClient 只做指针读，指针写是字长原子操作，读端要么看到旧
+// 客户端要么看到新客户端，二者都能正常工作（与 InitHttpClient 的写法一致）。
+func ReloadRelayHTTPClient() {
+	// 先清缓存：ResetProxyClientCache 会关闭所有缓存客户端的空闲连接，
+	// 并把「当前」默认客户端重新登记进 policy 缓存。
+	ResetProxyClientCache()
+	policy := defaultHTTPTransportPolicy()
+	client := newDirectHTTPClient(policy, nil)
+	httpClient = client
+	proxyClients.store(clientCacheKey("", policy), client)
+	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
+}

@@ -41,7 +41,9 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   if (isDynamicPricingModel(props.model)) {
     variant = 'warning'
   } else if (labelKey === 'Token-based') {
-    variant = 'info'
+    // Token billing is the default mode for nearly every model, so it stays
+    // quiet (neutral). Only the exceptions carry color.
+    variant = 'neutral'
   }
 
   return (

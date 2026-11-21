@@ -620,6 +620,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	var logMoney float64
 	var logPaymentMethod string
 	var upgradeGroup string
+	var completedOrder *SubscriptionOrder
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var order SubscriptionOrder
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
@@ -672,10 +673,23 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		logPlanTitle = plan.Title
 		logMoney = order.Money
 		logPaymentMethod = order.PaymentMethod
+		completedOrder = &order
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+	// 月卡/订阅订单也会写一行 TopUp 作为支付凭证（upsertSubscriptionTopUpTx），
+	// 事务提交后向该用户的订单状态流推送成功事件（v1.1.0 M1 · B14）。
+	if completedOrder != nil {
+		publishTopUpStatusChange(&TopUp{
+			UserId:       completedOrder.UserId,
+			TradeNo:      completedOrder.TradeNo,
+			Status:       common.TopUpStatusSuccess,
+			Money:        completedOrder.Money,
+			CreateTime:   completedOrder.CreateTime,
+			CompleteTime: completedOrder.CompleteTime,
+		})
 	}
 	if upgradeGroup != "" && logUserId > 0 {
 		refreshSubscriptionUserGroupCache(logUserId, common.LogText("subscription payment completion"))

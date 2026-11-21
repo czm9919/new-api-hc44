@@ -16,8 +16,8 @@ import (
 
 func RefreshAuth(c *gin.Context) {
 	setAuthNoStore(c)
-	rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
-	if err != nil || rawRefreshToken == "" {
+	rawRefreshToken, hasCookie := service.ReadRefreshCookie(c)
+	if !hasCookie {
 		service.ClearRefreshCookie(c)
 		writeAuthSessionError(c, service.ErrRefreshTokenInvalid)
 		return
@@ -47,9 +47,9 @@ func RefreshAuth(c *gin.Context) {
 func AuthLogout(c *gin.Context) {
 	setAuthNoStore(c)
 	expectedSID := strings.TrimSpace(c.GetHeader("X-Auth-Session"))
-	rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName)
+	rawRefreshToken, hasCookie := service.ReadRefreshCookie(c)
 	cookieSID, hasCookieSID := service.RefreshTokenSID(rawRefreshToken)
-	if expectedSID != "" && cookieErr == nil && hasCookieSID && cookieSID != expectedSID {
+	if expectedSID != "" && hasCookie && hasCookieSID && cookieSID != expectedSID {
 		writeAuthSessionError(c, service.ErrLoginSessionMismatch)
 		return
 	}
@@ -65,7 +65,7 @@ func AuthLogout(c *gin.Context) {
 				return
 			}
 			cookieCleared := false
-			if cookieErr == nil && hasCookieSID && cookieSID == identity.SessionID {
+			if hasCookie && hasCookieSID && cookieSID == identity.SessionID {
 				if err := service.RevokeByRefreshToken(rawRefreshToken, identity.SessionID, "logout"); err != nil {
 					writeAuthSessionError(c, err)
 					return
@@ -81,7 +81,7 @@ func AuthLogout(c *gin.Context) {
 			return
 		}
 	}
-	if cookieErr != nil || rawRefreshToken == "" {
+	if !hasCookie || rawRefreshToken == "" {
 		service.ClearRefreshCookie(c)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return
@@ -126,7 +126,7 @@ func DeleteLoginSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "session not found"})
 		return
 	}
-	if rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName); cookieErr == nil {
+	if rawRefreshToken, hasCookie := service.ReadRefreshCookie(c); hasCookie {
 		cookieSID, ok := service.RefreshTokenSID(rawRefreshToken)
 		if ok && cookieSID == sid {
 			service.ClearRefreshCookie(c)

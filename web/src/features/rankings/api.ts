@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { RankingPeriod, RankingsSnapshot } from './types'
+import type {
+  PricingLeaderboard,
+  RankingPeriod,
+  RankingsSnapshot,
+} from './types'
 
 type RankingsResponse = {
   success: boolean
@@ -30,5 +34,17 @@ export async function getRankings(
   period: RankingPeriod
 ): Promise<RankingsResponse> {
   const res = await api.get('/api/rankings', { params: { period } })
+  return res.data
+}
+
+type PricingLeaderboardResponse = {
+  success: boolean
+  message?: string
+  data: PricingLeaderboard
+}
+
+/** 价格排行榜（hc41）：公开只读，与 /api/pricing 共用同一个导航开关。 */
+export async function getPricingLeaderboard(): Promise<PricingLeaderboardResponse> {
+  const res = await api.get('/api/pricing/leaderboard')
   return res.data
 }

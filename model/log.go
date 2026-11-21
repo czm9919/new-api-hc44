@@ -385,9 +385,12 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
-	if err != nil {
-		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
+	// 消费日志是请求路径上唯一的高频写库点（v1.1.0 M1 · B09）：异步 worker
+	// 已启动时先入有界队列批量落库；队列满/未启动则退回同步写，保证不丢账。
+	if !enqueueConsumeLog(log) {
+		if err := createLog(log); err != nil {
+			logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
+		}
 	}
 	if common.DataExportEnabled {
 		var cacheReadTokens, cacheCreationTokens int
@@ -750,6 +753,168 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	stat.Tpm = rateStat.Tpm
 
 	return stat, nil
+}
+
+// ChannelLogStat 是单个渠道在一个时间窗内的消费成功/失败条数。
+type ChannelLogStat struct {
+	ChannelId    int
+	ConsumeCount int64
+	ErrorCount   int64
+}
+
+// GetChannelErrorStats 按渠道统计 since 之后的消费日志条数与错误日志条数，
+// 供基础监控告警（v1.1.0 M1 · B73）计算渠道失败率。只统计带渠道 id 的
+// 错误日志：无渠道的通用错误（鉴权、超时前的本地错误）不属于渠道故障。
+func GetChannelErrorStats(since int64) ([]ChannelLogStat, error) {
+	if LOG_DB == nil {
+		return nil, nil
+	}
+	var stats []ChannelLogStat
+	err := LOG_DB.Model(&Log{}).
+		Select("channel_id, SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) AS consume_count, SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) AS error_count",
+			LogTypeConsume, LogTypeError).
+		Where("created_at >= ? AND channel_id > ?", since, 0).
+		Group("channel_id").
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+// ModelUsageStat 是单个模型（或分组）在一个时间窗内的用量汇总。
+type ModelUsageStat struct {
+	Name             string `gorm:"column:name"`
+	UsedQuota        int64  `gorm:"column:used_quota"`
+	PromptTokens     int64  `gorm:"column:prompt_tokens_sum"`
+	CompletionTokens int64  `gorm:"column:completion_tokens_sum"`
+}
+
+// GetModelUsageSince 按模型汇总 since 之后的消费额度与 token 用量，
+// 供倍率变更影响预览（v1.1.0 M1 · B22）估算「改动前后 7 天收入差」。
+func GetModelUsageSince(since int64) ([]ModelUsageStat, error) {
+	if LOG_DB == nil {
+		return nil, nil
+	}
+	var stats []ModelUsageStat
+	err := LOG_DB.Table("logs").
+		Select("model_name AS name, COALESCE(SUM(quota), 0) AS used_quota, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens_sum, COALESCE(SUM(completion_tokens), 0) AS completion_tokens_sum").
+		Where("type = ? AND created_at >= ? AND model_name <> ?", LogTypeConsume, since, "").
+		Group("model_name").
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+// UserModelUsageStat 单个用户在一个时间窗内单个模型的用量汇总（hc31 · B90）。
+type UserModelUsageStat struct {
+	ModelName        string `gorm:"column:model_name"`
+	UsedQuota        int64  `gorm:"column:used_quota"`
+	PromptTokens     int64  `gorm:"column:prompt_tokens_sum"`
+	CompletionTokens int64  `gorm:"column:completion_tokens_sum"`
+	RequestCount     int64  `gorm:"column:request_count"`
+}
+
+// GetUserModelUsageSince 汇总单个用户 since 之后的逐模型消费额度与 token 用量，
+// 供成本优化建议（v1.1.0 M2 · B90）识别高占比模型与更便宜的替代。
+func GetUserModelUsageSince(userId int, since int64) ([]UserModelUsageStat, error) {
+	if LOG_DB == nil || userId <= 0 {
+		return nil, nil
+	}
+	var stats []UserModelUsageStat
+	err := LOG_DB.Table("logs").
+		Select("model_name, COALESCE(SUM(quota), 0) AS used_quota, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens_sum, COALESCE(SUM(completion_tokens), 0) AS completion_tokens_sum, COUNT(*) AS request_count").
+		Where("type = ? AND created_at >= ? AND user_id = ? AND model_name <> ?", LogTypeConsume, since, userId, "").
+		Group("model_name").
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+// TokenIPUsage 单个 token 在时间窗内某个 IP 的使用次数（hc31 · B93 key 泄露检测）。
+type TokenIPUsage struct {
+	TokenId      int    `gorm:"column:token_id"`
+	Ip           string `gorm:"column:ip"`
+	RequestCount int64  `gorm:"column:request_count"`
+	LastSeenAt   int64  `gorm:"column:last_seen_at"`
+}
+
+// GetTokenIPUsageSince 按 token + IP 聚合 since 之后的消费请求，供密钥泄露风险
+// 检测（B93）识别「同一密钥多 IP 使用」「实际 IP 与 AllowIps 白名单冲突」等异常。
+func GetTokenIPUsageSince(since int64) ([]TokenIPUsage, error) {
+	if LOG_DB == nil {
+		return nil, nil
+	}
+	var rows []TokenIPUsage
+	err := LOG_DB.Table("logs").
+		Select("token_id, ip, COUNT(*) AS request_count, MAX(created_at) AS last_seen_at").
+		Where("type = ? AND created_at >= ? AND token_id > ? AND ip <> ?", LogTypeConsume, since, 0, "").
+		Group("token_id, ip").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// logGroupColumn 返回 group 列的带引号写法。logGroupCol 只在 InitDB 里赋值，
+// 单测直接注入内存库时为空，这里按日志库类型兜底，避免拼出空列名。
+func logGroupColumn() string {
+	if logGroupCol != "" {
+		return logGroupCol
+	}
+	if common.LogDatabaseType() == common.DatabaseTypePostgreSQL {
+		return `"group"`
+	}
+	return "`group`"
+}
+
+// GetGroupUsageSince 按分组汇总 since 之后的消费额度，供分组倍率变更预览
+// （v1.1.0 M1 · B22）使用。列名 group 是 SQL 关键字，统一走 logGroupColumn。
+func GetGroupUsageSince(since int64) ([]ModelUsageStat, error) {
+	if LOG_DB == nil {
+		return nil, nil
+	}
+	groupCol := logGroupColumn()
+	var stats []ModelUsageStat
+	err := LOG_DB.Table("logs").
+		Select(groupCol+" AS name, COALESCE(SUM(quota), 0) AS used_quota").
+		Where("type = ? AND created_at >= ?", LogTypeConsume, since).
+		Group(groupCol).
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+// StatementLogRow 是对账月结单（v1.1.0 M1 · B26）需要的日志最小列。
+// 日维度分桶放在调用方用 Go 完成：各数据库的日期函数不一致，直接取
+// created_at 再分桶可以同时兼容 MySQL / PostgreSQL / SQLite / ClickHouse。
+type StatementLogRow struct {
+	CreatedAt int64
+	Type      int
+	Quota     int64
+}
+
+// GetStatementLogRows 取 [start, end) 内的充值/消费/退款日志。
+func GetStatementLogRows(start, end int64) ([]StatementLogRow, error) {
+	if LOG_DB == nil {
+		return nil, nil
+	}
+	var rows []StatementLogRow
+	err := LOG_DB.Table("logs").
+		Select("created_at, type, quota").
+		Where("created_at >= ? AND created_at < ? AND type IN ?", start, end, []int{LogTypeTopup, LogTypeConsume, LogTypeRefund}).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {

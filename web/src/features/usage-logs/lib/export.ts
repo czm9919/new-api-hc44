@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
+import type { ExportWatermark } from '../api'
 import type { UsageLog } from '../data/schema'
 import { logTokenName, parseLogOther, renderLogContent } from './format'
 import {
@@ -107,6 +108,26 @@ export function toCsvLine(cells: string[]): string {
     return `"${text.replaceAll('"', '""')}"`
   })
   return `${quoted.join(',')}\r\n`
+}
+
+/**
+ * The watermark row closing an exported CSV (v1.1.0 M1 · B143). It repeats
+ * the operator, the export time and the signed nonce the server sent, so the
+ * file stays traceable after being copied out of the browser. It sits below
+ * the data instead of above the header so spreadsheets still detect the
+ * header row.
+ */
+export function getLogCsvWatermarkRow(
+  watermark: ExportWatermark,
+  t: Translate
+): string[] {
+  return [
+    t('Watermark'),
+    `${watermark.username} (#${watermark.exporter_id})`,
+    formatTimestampToDate(watermark.exported_at),
+    watermark.scope === 'all' ? t('All users') : t('Own logs'),
+    `${watermark.nonce} ${watermark.signature}`,
+  ]
 }
 
 /** Save CSV lines as a UTF-8 file that spreadsheet apps open correctly. */

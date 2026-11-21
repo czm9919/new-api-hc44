@@ -42,7 +42,8 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 				return
 			}
 			c.Header("Cache-Control", "no-cache")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", common.IndexPageHTML(assets.IndexPage))
+			c.Data(http.StatusOK, "text/html; charset=utf-8",
+				common.IndexPageHTMLWithNonce(assets.IndexPage, middleware.CSPNonce(c)))
 			c.Abort()
 		},
 		middleware.ServeFrontendFiles(frontendFS),
@@ -54,7 +55,10 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 			c.Header("Cache-Control", "no-cache")
 			// 自定义 Head 代码在这里注入：所有前台路由共用同一份 index.html，
 			// 因此改一次配置就对全站生效（详见 common/custom_head.go）。
-			c.Data(http.StatusOK, "text/html; charset=utf-8", common.IndexPageHTML(assets.IndexPage))
+			// CSP nonce 最后一步注入（v1.1.0 M1 · B139）：内联脚本按本次请求
+			// 的 nonce 放行，自定义 Head 里的内联脚本也一并覆盖。
+			c.Data(http.StatusOK, "text/html; charset=utf-8",
+				common.IndexPageHTMLWithNonce(assets.IndexPage, middleware.CSPNonce(c)))
 		},
 	)
 }

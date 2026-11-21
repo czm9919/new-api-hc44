@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -202,6 +203,8 @@ func TestRedisFailurePolicies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	_, redisClient := useRateLimitMiniRedis(t)
 	require.NoError(t, redisClient.Close())
+	common.MarkRedisSuccess() // 复位健康跟踪器，避免其他用例遗留降级状态
+	t.Cleanup(func() { common.MarkRedisSuccess() })
 
 	router := gin.New()
 	require.NoError(t, router.SetTrustedProxies(nil))
@@ -219,12 +222,95 @@ func TestRedisFailurePolicies(t *testing.T) {
 	})
 
 	ipResponse := performRateLimitRequest(router, "/ip", "192.0.2.60:12345")
-	assert.Equal(t, http.StatusInternalServerError, ipResponse.Code)
-	assert.Empty(t, ipResponse.Body.String())
+	// v1.1.0 M2 · B12：Redis 故障时 IP 限流显式降级到内存实现——第一个请求
+	// 放行，第二个超出内存窗口上限才 429；不再因为外部依赖抖动直接 500。
+	assert.Equal(t, http.StatusNoContent, ipResponse.Code)
+	assert.Equal(t, http.StatusTooManyRequests,
+		performRateLimitRequest(router, "/ip", "192.0.2.60:12345").Code)
+
 	userResponse := performRateLimitRequest(router, "/user", "192.0.2.61:12345")
-	assert.Equal(t, http.StatusInternalServerError, userResponse.Code)
-	assert.Empty(t, userResponse.Body.String())
+	assert.Equal(t, http.StatusNoContent, userResponse.Code)
+	assert.Equal(t, http.StatusTooManyRequests,
+		performRateLimitRequest(router, "/user", "192.0.2.61:12345").Code)
+	assert.True(t, common.RedisDegraded(), "连续失败应把 Redis 标记为降级")
+
 	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/email", "192.0.2.62:12345").Code)
+}
+
+func TestQQAgentRateLimitProtectsRobotEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousEnable, previousNum, previousDuration := common.QQAgentRateLimitEnable, common.QQAgentRateLimitNum, common.QQAgentRateLimitDuration
+	t.Cleanup(func() {
+		common.QQAgentRateLimitEnable, common.QQAgentRateLimitNum, common.QQAgentRateLimitDuration = previousEnable, previousNum, previousDuration
+	})
+	common.QQAgentRateLimitEnable, common.QQAgentRateLimitNum, common.QQAgentRateLimitDuration = true, 3, 47
+
+	newRouter := func() *gin.Engine {
+		router := gin.New()
+		require.NoError(t, router.SetTrustedProxies(nil))
+		router.POST("/api/qq/agent/verify", QQAgentRateLimit(), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		return router
+	}
+	performPost := func(router http.Handler, remoteAddr string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/qq/agent/verify",
+			strings.NewReader(`{"code":"ABCD2345","qq":"100012345"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.RemoteAddr = remoteAddr
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	t.Run("redis path gives one budget per robot egress IP", func(t *testing.T) {
+		redisServer, _ := useRateLimitMiniRedis(t)
+		router := newRouter()
+		const clientIP = "192.0.2.91"
+		const remoteAddr = clientIP + ":12345"
+
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, performPost(router, remoteAddr).Code)
+		}
+		limited := performPost(router, remoteAddr)
+		assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+		assert.Equal(t, "47", limited.Header().Get("Retry-After"))
+
+		key := redisIPRateLimitKey("QA", clientIP)
+		count, err := redisServer.Get(key)
+		require.NoError(t, err)
+		assert.Equal(t, "4", count)
+		assert.Equal(t, 47*time.Second, redisServer.TTL(key))
+
+		// 另一个出口 IP 有独立预算：多机器人部署时互不牵连。
+		assert.Equal(t, http.StatusNoContent, performPost(router, "198.51.100.91:12345").Code)
+	})
+
+	t.Run("memory path when Redis is disabled", func(t *testing.T) {
+		previousRedisEnabled, previousRedisClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = false, nil
+		t.Cleanup(func() {
+			common.RedisEnabled, common.RDB = previousRedisEnabled, previousRedisClient
+		})
+		router := newRouter()
+		const remoteAddr = "192.0.2.92:12345"
+
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, performPost(router, remoteAddr).Code)
+		}
+		limited := performPost(router, remoteAddr)
+		assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+		// 内存限流器报不出剩余窗口，用整窗口作保守上界。
+		assert.Equal(t, "47", limited.Header().Get("Retry-After"))
+	})
+
+	t.Run("disabled switch bypasses the limiter", func(t *testing.T) {
+		common.QQAgentRateLimitEnable = false
+		router := newRouter()
+		for range 6 {
+			assert.Equal(t, http.StatusNoContent, performPost(router, "192.0.2.93:12345").Code)
+		}
+	})
 }
 
 func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {

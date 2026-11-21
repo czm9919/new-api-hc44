@@ -112,6 +112,12 @@ func ExportUserLogs(c *gin.Context) {
 // response object: success with the log count, or the failure. Each user runs
 // one export at a time, and every export stays within the longest log time
 // range.
+//
+// The stream opens with a signed watermark (v1.1.0 M1 · B143) naming the
+// operator, the time and the search, so a leaked file can be traced back to the
+// account that produced it. The same watermark is echoed in
+// X-Export-Watermark so a proxy log or a curl transcript keeps the identifier
+// even when only headers survive.
 func exportLogs(c *gin.Context, all bool) {
 	filter := logFilterFromQuery(c, all)
 	startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
@@ -134,12 +140,71 @@ func exportLogs(c *gin.Context, all bool) {
 	}
 	defer release()
 
+	scope := service.ExportScopeSelf
+	if all {
+		scope = service.ExportScopeAll
+	}
+	watermark, err := service.NewExportWatermark(userId, c.GetString("username"), c.GetInt("role"), scope, map[string]any{
+		"type":                filter.Type,
+		"start_timestamp":     filter.StartTimestamp,
+		"end_timestamp":       filter.EndTimestamp,
+		"model_name":          filter.ModelName,
+		"token_name":          filter.TokenName,
+		"group":               filter.Group,
+		"request_id":          filter.RequestId,
+		"upstream_request_id": filter.UpstreamRequestId,
+		"username":            filter.Username,
+		"channel":             filter.Channel,
+	})
+	if err != nil {
+		common.SysError(common.LogText("failed to build export watermark: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to export logs")
+		return
+	}
+	watermarkLine, err := service.ExportWatermarkLine(watermark)
+	if err != nil {
+		common.SysError(common.LogText("failed to encode export watermark: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to export logs")
+		return
+	}
+
 	c.Header("Content-Type", "application/x-ndjson; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Accel-Buffering", "no")
+	c.Header("X-Export-Watermark", watermark.Signature)
+	c.Header("X-Export-Watermark-Id", watermark.Nonce)
 	c.Status(http.StatusOK)
 
 	count := 0
+	// The audit row is written after the stream ends (or fails) because only
+	// then is the row count known; it stays out of the response body.
+	defer func() {
+		params := map[string]any{
+			"scope":           scope,
+			"count":           count,
+			"watermark":       watermark.Nonce,
+			"success":         !c.IsAborted(),
+			"start_time":      watermark.Filter["start_timestamp"],
+			"end_time":        watermark.Filter["end_timestamp"],
+			"model_name":      watermark.Filter["model_name"],
+			"target_username": watermark.Filter["username"],
+		}
+		action := "log.export"
+		if all {
+			action = "log.export_all"
+		}
+		// Administrators get their own operator block in admin_info; a common
+		// user exporting their own logs has no admin context to record.
+		if all || c.GetInt("role") >= common.RoleAdminUser {
+			recordManageAudit(c, action, params)
+			return
+		}
+		recordUserSecurityAudit(c, userId, action, params)
+	}()
+
+	if _, err := c.Writer.Write(append(watermarkLine, '\n')); err != nil {
+		return
+	}
 	writeLog := func(log *model.Log) error {
 		line, err := common.Marshal(log)
 		if err != nil {

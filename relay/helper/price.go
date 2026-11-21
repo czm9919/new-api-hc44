@@ -199,6 +199,9 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		if err != nil {
 			return hosttypes.PriceData{}, err
 		}
+		// B95：按次计费单次上限。运维给「按次」模型配了上限后，
+		// 一次请求最多扣这么多，避免超长上下文/多图请求把按次价打成亏本。
+		quota = operation_setting.ClampPerCallQuota(quota)
 		priceData.QuotaToPreConsume = quota
 	}
 
@@ -274,6 +277,11 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 		UsePrice:       usePrice,
 		Quota:          quota,
 		GroupRatioInfo: groupRatioInfo,
+	}
+	if usePrice {
+		// B95：按次/按量计费的单次上限同样作用于结算额度，
+		// 保证「预扣 = 结算」，不会出现预扣被夹紧、结算按原价的情况。
+		priceData.Quota = operation_setting.ClampPerCallQuota(priceData.Quota)
 	}
 	return priceData, nil
 }

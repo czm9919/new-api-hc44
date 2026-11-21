@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -37,6 +37,8 @@ interface UserQuotaDialogProps {
   onOpenChange: (open: boolean) => void
   userId: number
   currentQuota: number
+  /** Required to unlock the "clear quota" confirmation (v1.1.0 M1 · B23). */
+  userName?: string
   onSuccess: () => void
 }
 
@@ -45,6 +47,18 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
+  const [clearTyped, setClearTyped] = useState('')
+
+  const isClearingQuota =
+    mode === 'override' &&
+    amount.trim() !== '' &&
+    (Number.parseFloat(amount) || 0) === 0
+  const clearConfirmed =
+    !!props.userName && clearTyped.trim() === props.userName
+
+  useEffect(() => {
+    if (props.open) setClearTyped('')
+  }, [props.open])
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -73,6 +87,9 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const handleConfirm = async () => {
     if (!amount && mode !== 'override') return
     if (quotaValue <= 0 && mode !== 'override') return
+    // Clearing quota is irreversible for the user; refuse unless the operator
+    // typed the exact username (v1.1.0 M1 · B23).
+    if (isClearingQuota && !clearConfirmed) return
 
     setLoading(true)
     try {
@@ -123,7 +140,10 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           <Button variant='outline' onClick={handleCancel}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleConfirm} disabled={loading}>
+          <Button
+            onClick={handleConfirm}
+            disabled={loading || (isClearingQuota && !clearConfirmed)}
+          >
             {loading ? t('Processing...') : t('Confirm')}
           </Button>
         </>
@@ -131,6 +151,23 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     >
       <div className='space-y-4'>
         <div className='text-muted-foreground text-sm'>{getPreviewText()}</div>
+
+        {isClearingQuota ? (
+          <div className='space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3'>
+            <div className='text-destructive text-sm'>
+              {t(
+                'This will clear all quota of user "{{name}}". Type the username to confirm.',
+                { name: props.userName ?? '' }
+              )}
+            </div>
+            <Input
+              value={clearTyped}
+              placeholder={props.userName}
+              autoComplete='off'
+              onChange={(e) => setClearTyped(e.target.value)}
+            />
+          </div>
+        ) : null}
 
         <div className='space-y-2'>
           <Label>{t('Mode')}</Label>

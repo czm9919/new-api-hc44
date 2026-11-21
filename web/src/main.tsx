@@ -31,7 +31,7 @@ import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
-import './i18n/config'
+import { preloadLocales } from './i18n/config'
 // Generated Routes
 import { routeTree } from './routeTree.gen'
 
@@ -100,7 +100,8 @@ if (!rootElement) {
     /* empty */
   }
 })()
-if (!rootElement.innerHTML) {
+
+const renderApp = () => {
   const root = ReactDOM.createRoot(rootElement)
   root.render(
     <StrictMode>
@@ -115,4 +116,11 @@ if (!rootElement.innerHTML) {
       </QueryClientProvider>
     </StrictMode>
   )
+}
+
+// Mount once the active locale bundle is on hand, so the first paint never
+// shows raw translation keys. Mounting anyway on failure keeps a broken
+// network request from blanking the whole app.
+if (!rootElement.innerHTML) {
+  void preloadLocales().then(renderApp, renderApp)
 }

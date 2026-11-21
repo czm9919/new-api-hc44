@@ -57,3 +57,36 @@ export function getUserInitials(user?: UserProfile): string {
   }
   return name.slice(0, 2).toUpperCase()
 }
+
+export type ProfileQuotaSplit = {
+  /** 总可用余额（user.quota，免费额度已包含在内） */
+  total: number
+  /** 免费额度（签到等赠送，user.free_quota，是 total 的一部分） */
+  free: number
+  /** 付费余额 = total - free */
+  paid: number
+}
+
+/**
+ * 把钱包的两个数字拆成「付费余额 / 免费额度 / 总可用」。
+ *
+ * user.quota 是工作余额**总额**，free_quota 只是其中标了「免费」的那部分，
+ * 所以付费余额 = quota - free_quota。签到发奖时这两个字段同步 +奖励，
+ * 付费余额不变 —— 页面若把 quota 直接当「余额」展示，签到后就会出现
+ * 「付费额度」和「免费额度」两张卡同时上涨、看起来像重复发奖的假象。
+ */
+export function splitProfileQuota(
+  quota?: number,
+  freeQuota?: number
+): ProfileQuotaSplit {
+  const total = quota ?? 0
+  const free = Math.max(0, freeQuota ?? 0)
+  const paid = total - free
+  // 总额为正时不允许出现负的付费余额（免费额度理论上不会超过总额，
+  // 超了说明数据不一致，显示 0 比显示负数更不容易误导）；透支时保留负号。
+  return {
+    total,
+    free,
+    paid: total >= 0 && paid < 0 ? 0 : paid,
+  }
+}

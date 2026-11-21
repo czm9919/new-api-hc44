@@ -40,6 +40,7 @@ func (w currentLogWriter) Write(p []byte) (int, error) {
 
 func SysLog(s string) {
 	t := time.Now()
+	s = RedactSensitive(s) // 日志脱敏（v1.1.0 M1 · B142）
 	LogWriterMu.RLock()
 	_, _ = fmt.Fprintf(gin.DefaultWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
 	LogWriterMu.RUnlock()
@@ -47,6 +48,7 @@ func SysLog(s string) {
 
 func SysError(s string) {
 	t := time.Now()
+	s = RedactSensitive(s) // 日志脱敏（v1.1.0 M1 · B142）
 	LogWriterMu.RLock()
 	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
 	LogWriterMu.RUnlock()
@@ -55,8 +57,14 @@ func SysError(s string) {
 func FatalLog(v ...any) {
 	t := time.Now()
 	LogWriterMu.RLock()
-	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[FATAL] %v | %v \n", t.Format("2006/01/02 - 15:04:05"), v)
-	LogWriterMu.RUnlock()
+	defer LogWriterMu.RUnlock()
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[FATAL] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), RedactSensitive(s))
+		} else {
+			_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[FATAL] %v | %v \n", t.Format("2006/01/02 - 15:04:05"), item)
+		}
+	}
 	os.Exit(1)
 }
 

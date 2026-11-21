@@ -38,6 +38,7 @@ const (
 	MsgQuotaUserInsufficient             = "quota.user_insufficient"
 	MsgQuotaPreConsumeInsufficient       = "quota.pre_consume_insufficient"
 	MsgQuotaSubscriptionInsufficient     = "quota.subscription_insufficient"
+	MsgQuotaBelowMinWallet               = "quota.below_min_wallet"
 	MsgRelayModelPriceNotConfigured      = "relay.model_price_not_configured"
 	MsgRelayModelPriceNotConfiguredAdmin = "relay.model_price_not_configured_admin"
 	MsgRelayTaskUsagePriceUnsupported    = "relay.task_usage_price_unsupported"
@@ -81,6 +82,9 @@ const (
 	MsgEmailSecurityNoticeChanged = "email.security_notice.changed"
 	MsgEmailSecurityNoticeAdvice  = "email.security_notice.advice"
 
+	MsgEmailLoginAlertSubject = "email.login_alert.subject"
+	MsgEmailLoginAlertBody    = "email.login_alert.body"
+
 	MsgSecurityEventPasswordUpdated      = "email.security_event.password_updated"
 	MsgSecurityEventEmailChangeRequested = "email.security_event.email_change_requested"
 	MsgSecurityEventEmailChanged         = "email.security_event.email_changed"
@@ -97,6 +101,8 @@ const (
 	MsgNotifyQuotaLowBark              = "notify.quota_low_bark"
 	MsgNotifyQuotaLowGotify            = "notify.quota_low_gotify"
 	MsgNotifyQuotaLowEmail             = "notify.quota_low_email"
+	MsgNotifyUsageAlertTitle           = "notify.usage_alert_title"
+	MsgNotifyUsageAlertContent         = "notify.usage_alert_content"
 )
 
 // Channel notices sent to administrators who receive them and to model update

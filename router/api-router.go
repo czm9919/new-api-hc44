@@ -17,6 +17,10 @@ import (
 func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
+	// CSRF 双保险（v1.1.0 M1 · B04）：对带 Origin/Referer 的写请求校验来源，
+	// 与 SameSite=Strict 的 refresh cookie 形成两道防线。无浏览器头的
+	// SDK/服务器调用不受影响，OAuth 与支付回调路径在中间件内部豁免。
+	apiRouter.Use(middleware.CSRFOriginCheck())
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	apiRouter.Use(middleware.AccessTokenAudit())
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
@@ -30,12 +34,37 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
 		apiRouter.GET("/notice", controller.GetNotice)
+		// 模型公告位（v1.1.0 M2 · B64）：公开读取当前生效的下架/维护公告
+		apiRouter.GET("/model_notice/active", middleware.DisableCache(), controller.GetActiveModelNotices)
+		// 公开售卖页（v1.1.0 M1 · B20 /buy）：未登录可看套餐，下单仍需登录。
+		apiRouter.GET("/subscription/public/plans", middleware.DisableCache(), controller.GetPublicSubscriptionPlans)
+		// 自研模型展示页（/lab）：纯展示 + 求赞助，匿名只读，与主站计费/路由零关联。
+		// status 是对推理服务器状态端点的服务端代理，避开 CORS。
+		apiRouter.GET("/lab/public/config", middleware.DisableCache(), controller.GetLabPublicConfig)
+		apiRouter.GET("/lab/public/status", middleware.DisableCache(), controller.GetLabPublicStatus)
+		// AstrBot 机器人接入（v1.1.0 M2）：机器人用自己的服务令牌调用，
+		// 与用户会话隔离；令牌未配置时接口直接返回 503（默认关闭）。
+		// 限流挂在 group 上（先拦再读 body），预算按群规模配置：机器人出口
+		// IP 固定，一个 IP 承载整群成员的绑定请求（QQ_AGENT_RATE_LIMIT）。
+		qqAgentRoute := apiRouter.Group("/qq/agent", middleware.QQAgentRateLimit())
+		{
+			qqAgentRoute.GET("/ping", controller.QQAgentPing)
+			qqAgentRoute.POST("/verify", anonymousRequestBodyLimit, controller.QQAgentVerify)
+			qqAgentRoute.GET("/verify", controller.QQAgentVerify)
+			// 自助查询（hc45）：余额 / 用量 / 签到 / 排行，只读或只影响调用者自己
+			qqAgentRoute.GET("/me", controller.QQAgentMe)
+			qqAgentRoute.POST("/checkin", anonymousRequestBodyLimit, controller.QQAgentCheckin)
+			qqAgentRoute.GET("/rank", controller.QQAgentRank)
+		}
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
 		apiRouter.GET("/about", controller.GetAbout)
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
+		// 价格排行榜（hc41）：公开只读，与 /pricing 共用同一个导航开关。
+		// 数据 = 本站单价 + 管理员最近一次同步的官方单价快照。
+		apiRouter.GET("/pricing/leaderboard", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricingLeaderboard)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
 		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
 		{
@@ -99,6 +128,15 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
 				selfRoute.GET("/self", controller.GetSelf)
 				selfRoute.GET("/models", controller.GetUserModels)
+				// v1.1.0 M2 · B90 成本优化建议（近 N 天逐模型消耗 + 倍率）
+				selfRoute.GET("/cost-insight", controller.GetCostInsight)
+				// v1.1.0 M2 · B93 密钥泄露风险自查（token × IP 聚合）
+				selfRoute.GET("/token-risk", controller.GetUserTokenRisk)
+				// hc31 · B211 站内通知中心
+				selfRoute.GET("/notifications", controller.GetNotifications)
+				selfRoute.GET("/notifications/unread-count", controller.GetNotificationUnreadCount)
+				selfRoute.POST("/notifications/read-all", controller.MarkAllNotificationsRead)
+				selfRoute.POST("/notifications/:id/read", controller.MarkNotificationRead)
 				selfRoute.PUT("/self", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UpdateSelf)
 				selfRoute.DELETE("/self", middleware.DisableCache(), controller.DeleteSelf)
 				accessTokenRoute := selfRoute.Group("/access_tokens")
@@ -119,6 +157,13 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/passkey/verify/finish", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyVerifyFinish)
 				selfRoute.DELETE("/passkey", middleware.DisableCache(), controller.PasskeyDelete)
 				selfRoute.GET("/aff", controller.GetAffCode)
+				// 邀请排行榜（v1.1.0 M2 · B63）：用户名脱敏展示
+				selfRoute.GET("/aff/leaderboard", controller.GetAffLeaderboard)
+				// 发票抬头管理（v1.1.0 M2 · B99）
+				selfRoute.GET("/invoice_profile", controller.GetUserInvoiceProfiles)
+				selfRoute.POST("/invoice_profile", controller.AddInvoiceProfile)
+				selfRoute.PUT("/invoice_profile/:id", controller.UpdateInvoiceProfile)
+				selfRoute.DELETE("/invoice_profile/:id", controller.DeleteInvoiceProfile)
 				selfRoute.GET("/realname/status", controller.GetRealNameStatus)
 				selfRoute.POST("/realname/phone/send", middleware.CriticalRateLimit(), controller.SendRealNamePhoneCode)
 				selfRoute.POST("/realname/phone/bind", middleware.CriticalRateLimit(), controller.BindRealNamePhone)
@@ -126,6 +171,9 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/realname/manual", middleware.CriticalRateLimit(), controller.SubmitRealNameManual)
 				selfRoute.GET("/topup/info", controller.GetTopUpInfo)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
+				// 订单状态推送（v1.1.0 M1 · B14）：SSE 长连接，前端订阅后
+				// 支付回调完成即被动收到订单状态，不再自己轮询。
+				selfRoute.GET("/topup/stream", controller.StreamTopUpStatus)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
 				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)
 				selfRoute.POST("/amount", controller.RequestAmount)
@@ -150,6 +198,18 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
 				selfRoute.POST("/checkin", middleware.TurnstileCheck(), controller.DoCheckin)
 
+				// 大转盘抽奖（v1.1.0 M2）：奖池/次数由 option 配置，
+				// 默认要求绑定 QQ（与免费模型门禁同一凭据）。
+				selfRoute.GET("/lottery", controller.GetLottery)
+				selfRoute.POST("/lottery/spin", middleware.CriticalRateLimit(), controller.SpinLottery)
+				selfRoute.GET("/lottery/records", controller.GetLotteryRecords)
+
+				// QQ 绑定（v1.1.0 M2）：面板只生成一次性码，绑定动作在
+				// 配套 AstrBot 机器人侧完成（见 /api/qq/agent/verify）。
+				selfRoute.GET("/qq/bind", controller.GetQQBindStatus)
+				selfRoute.POST("/qq/bind/code", middleware.CriticalRateLimit(), controller.CreateQQBindCode)
+				selfRoute.DELETE("/qq/bind", controller.UnbindQQAccount)
+
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
@@ -161,7 +221,28 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
+				// v1.1.0 M2 · B59 订单备注：给一笔充值单写运营备注（最长 255 字）
+				adminRoute.POST("/topup/remark", controller.AdminUpdateTopUpRemark)
+				// v1.1.0 M2 · B58 批量发额度：一次给最多 200 个用户加额度，
+				// 逐个独立提交，失败的单独回报原因
+				adminRoute.POST("/batch_grant_quota", controller.BatchGrantUserQuota)
+				// v1.1.0 M2 · B222 用户批量导入：逐行校验、独立事务、返回明细
+				adminRoute.POST("/batch_import", controller.BatchImportUsers)
+				// 大转盘抽奖配置（v1.1.0 M2）：开关/每日次数/奖池 JSON/是否要求 QQ
+				adminRoute.GET("/lottery/settings", controller.AdminGetLotterySettings)
+				adminRoute.PUT("/lottery/settings", controller.AdminUpdateLotterySettings)
+				// 恢复默认奖池：运营手改坏了不用记原始 JSON
+				adminRoute.POST("/lottery/settings/reset", controller.AdminResetLotterySettings)
+				// QQ 机器人接入配置（v1.1.0 M2）：服务令牌 + 免费模型门禁开关。
+				// 单独一组接口，避免把令牌混进用户态 /api/user/lottery 响应。
+				adminRoute.GET("/lottery/qq/settings", controller.AdminGetQQAgentSettings)
+				adminRoute.PUT("/lottery/qq/settings", controller.AdminUpdateQQAgentSettings)
+				// 撤销令牌（DELETE）与一键轮换（POST rotate，明文只回一次）
+				adminRoute.DELETE("/lottery/qq/settings", controller.AdminClearQQAgentToken)
+				adminRoute.POST("/lottery/qq/settings/rotate", controller.AdminRotateQQAgentToken)
 				adminRoute.GET("/search", controller.SearchUsers)
+				// hc34 用户消耗排行榜：窗口内消费额度倒序前 N 名（管理员专属）
+				adminRoute.GET("/consumption_rank", controller.GetUserConsumptionRank)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
@@ -247,8 +328,13 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/model_pricing/preview", controller.PreviewModelPricing)
 			optionRoute.POST("/payment_compliance", controller.ConfirmPaymentCompliance)
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
+			// hc31 · B213 通知事件覆盖表
+			optionRoute.GET("/notify_event_catalog", controller.GetNotifyEventCatalog)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
+			optionRoute.POST("/ratio_diff_preview", controller.PreviewRatioDiff)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
+			// 第三方价格表导入（v1.1.0 M2 · B223）：LiteLLM / OpenRouter → 倍率
+			optionRoute.POST("/import_model_configs", controller.ImportModelConfigs)
 			optionRoute.GET("/waffo-pancake/catalog", controller.ListWaffoPancakeCatalog)
 			optionRoute.POST("/waffo-pancake/pair", controller.CreateWaffoPancakePair)
 			optionRoute.POST("/waffo-pancake/save", controller.SaveWaffoPancake)
@@ -267,6 +353,22 @@ func SetApiRouter(router *gin.Engine) {
 			customOAuthRoute.PUT("/:id", controller.UpdateCustomOAuthProvider)
 			customOAuthRoute.DELETE("/:id", controller.DeleteCustomOAuthProvider)
 		}
+		// v1.1.0 M2 · B13 数据库备份导出（仅 root）：SQLite 直接导出库文件，
+		// 其他库返回 501 引导使用 mysqldump/pg_dump。
+		backupRoute := apiRouter.Group("/backup")
+		backupRoute.Use(middleware.DisableCache(), middleware.RootAuth())
+		{
+			backupRoute.GET("/export", controller.ExportDatabaseBackup)
+		}
+
+		// v1.1.0 M2 · B12 Redis 健康状态（仅 root）：限流是否正在降级、
+		// 连续失败计数、最近错误与恢复时间。
+		redisHealthRoute := apiRouter.Group("/health")
+		redisHealthRoute.Use(middleware.DisableCache(), middleware.RootAuth())
+		{
+			redisHealthRoute.GET("/redis", controller.GetRedisHealth)
+		}
+
 		performanceRoute := apiRouter.Group("/performance")
 		performanceRoute.Use(middleware.RootAuth())
 		{
@@ -282,6 +384,9 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
+			// 一键同步官方定价：只刷新「官方参考价」快照供排行榜使用，
+			// 改本站倍率仍然走前端确认流程（fetch -> 选择 -> Apply Sync）。
+			ratioSyncRoute.POST("/official/refresh", controller.RefreshOfficialPricing)
 		}
 		taskPluginRoute := apiRouter.Group("/plugin/task")
 		taskPluginRoute.Use(middleware.RootAuth())
@@ -326,6 +431,15 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
+		}
+		// v1.1.0 M2 · B93 / hc36：管理端密钥泄露风险巡检跨用户汇总，必须管理员。
+		// 修复越权：原先挂在 tokenRoute（仅 UserAuth），任何已登录用户都能拉到
+		// 全站所有用户的密钥风险证据（用户名、来源 IP、用量）。
+		tokenAdminRoute := apiRouter.Group("/token")
+		tokenAdminRoute.Use(middleware.AdminAuth())
+		tokenAdminRoute.Use(middleware.TokenOperationAudit())
+		{
+			tokenAdminRoute.GET("/risk/overview", controller.GetTokenRiskOverview)
 		}
 
 		// 号池 key-pool：商汤/英伟达 key 验活后加入号池并生成固定额度 token
@@ -379,8 +493,11 @@ func SetApiRouter(router *gin.Engine) {
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)
 		}
 		handlePermissionRoute(apiRouter.Group("", middleware.DisableCache(), middleware.AdminAuth()), http.MethodGet, "/audit", authz.AuditRead, controller.GetAuditLogs)
+		handlePermissionRoute(apiRouter.Group("", middleware.DisableCache(), middleware.AdminAuth()), http.MethodGet, "/audit/verify", authz.AuditRead, controller.VerifyAuditLogChain)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)
 		logRoute := apiRouter.Group("/log")
+		// 对账月结单（v1.1.0 M1 · B26）：按月汇总充值/消耗/退款/挂单。
+		logRoute.GET("/statement", middleware.AdminAuth(), controller.GetMonthlyStatement)
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
@@ -390,6 +507,11 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/export", middleware.AdminAuth(), controller.ExportAllLogs)
 		logRoute.GET("/self/export", middleware.UserAuth(), controller.ExportUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
+		// 扣费明细下钻（v1.1.0 M2 · B60）：/self/detail/:id，也支持 ?request_id= 定位
+		logRoute.GET("/self/detail/:id", middleware.UserAuth(), controller.GetSelfLogBillingDetail)
+		logRoute.GET("/self/detail", middleware.UserAuth(), controller.GetSelfLogBillingDetail)
+		// 请求耗时分布（v1.1.0 M2 · B114）
+		logRoute.GET("/self/latency", middleware.UserAuth(), controller.GetSelfLatencyStats)
 
 		systemTaskRoute := apiRouter.Group("/system-task")
 		systemTaskRoute.Use(middleware.RootAuth())
@@ -472,6 +594,16 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.POST("/", controller.CreateModelMeta)
 			modelsRoute.PUT("/", controller.UpdateModelMeta)
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
+		}
+
+		// 模型公告位后台管理（v1.1.0 M2 · B64）
+		modelNoticeRoute := apiRouter.Group("/model_notice")
+		modelNoticeRoute.Use(middleware.AdminAuth())
+		{
+			modelNoticeRoute.GET("/", controller.GetAllModelNotices)
+			modelNoticeRoute.POST("/", controller.AddModelNotice)
+			modelNoticeRoute.PUT("/:id", controller.UpdateModelNotice)
+			modelNoticeRoute.DELETE("/:id", controller.DeleteModelNotice)
 		}
 
 		// Deployments (model deployment management)

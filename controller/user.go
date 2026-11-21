@@ -78,12 +78,25 @@ func Login(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	// 登录失败锁定（v1.1.0 M1 · B77）：达到阈值后在窗口内直接拒绝，
+	// 不再进入密码校验，避免继续消耗 Argon2id 的算力。
+	if wait := service.LoginLockRemainingSeconds(username); wait > 0 {
+		c.Header("Retry-After", strconv.Itoa(wait))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"success": false,
+			"code":    "LOGIN_LOCKED",
+			"message": fmt.Sprintf("Too many failed sign-in attempts. Try again in %d seconds.", wait),
+			"data":    gin.H{"retry_after": wait},
+		})
+		return
+	}
 	user := model.User{
 		Username: username,
 		Password: password,
 	}
 	err = user.ValidateAndFill()
 	if err != nil {
+		service.RecordLoginFailure(username)
 		switch {
 		case errors.Is(err, model.ErrDatabase):
 			common.SysLog(common.LogText("Login database error for user %s: %v", username, err))
@@ -95,6 +108,7 @@ func Login(c *gin.Context) {
 		}
 		return
 	}
+	service.ResetLoginFailures(username)
 
 	setupLogin(&user, nil, c)
 }
@@ -199,6 +213,9 @@ func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBu
 	c.Set("login_method", bundle.Session.LoginMethod)
 	model.UpdateUserLastLoginAt(user.Id)
 	service.WriteRefreshCookie(c, bundle.RefreshToken)
+	// 异常登录提醒（v1.1.0 M1 · B05）：必须在 recordLoginAudit 之前判定，
+	// 否则本次 IP 已写入审计，永远不会再被视为「新地址」。
+	service.NotifyUnrecognizedLogin(user.Id, bundle.Session.LoginMethod, c.ClientIP())
 	setAuthNoStore(c)
 	recordLoginAudit(user, c)
 	c.JSON(http.StatusOK, gin.H{

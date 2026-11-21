@@ -281,7 +281,7 @@ export function PaymentMethodDialog({
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Enter a react-icons component name. Invalid names show no icon.'
+                    'Built-in icon sets: Si* (brand logos) and Lu* (line icons). Unsupported names show no icon.'
                   )}
                 </FormDescription>
                 <FormMessage />

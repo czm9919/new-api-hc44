@@ -33,6 +33,23 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/home_page_content",
 	"GET /api/ratio_config",
 	"GET /api/user/groups",
+	// v1.1.0 M2 · B64 模型公告位公开读取（页面顶部横幅），匿名可读。
+	"GET /api/model_notice/active",
+	// v1.1.0 M1 · B20 公开售卖页套餐列表：匿名可读，不经过面板鉴权。
+	"GET /api/subscription/public/plans",
+	// Lab 自研模型展示页（/lab）：匿名公开只读（展示配置 + 推理状态代理），
+	// 与主站计费/路由零关联，不经过面板鉴权。
+	"GET /api/lab/public/config",
+	"GET /api/lab/public/status",
+	// v1.1.0 M2 AstrBot 机器人接入：用独立服务令牌（option qq_agent_token），
+	// 与面板会话/PAT 完全无关，因此不参与面板路由的 scope 登记。
+	"GET /api/qq/agent/ping",
+	"POST /api/qq/agent/verify",
+	"GET /api/qq/agent/verify",
+	// hc45 自助查询：同样只认机器人服务令牌，不参与面板 scope 登记。
+	"GET /api/qq/agent/me",
+	"POST /api/qq/agent/checkin",
+	"GET /api/qq/agent/rank",
 
 	// Anonymous account entry points.
 	"GET /api/verification",

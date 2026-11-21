@@ -288,6 +288,13 @@ func TestRestoreConnectionContextRejectsChangedAdvancedCustomRoute(t *testing.T)
 
 func TestResponsesWSChannelRoutingRequiresExplicitOptIn(t *testing.T) {
 	require.NoError(t, i18n.Init())
+	// hc 默认给 default 分组启用 smart 策略（无视优先级分层），而本测试断言
+	// HTTP 分发走的是优先级最高的渠道；测试内清空分组策略覆盖，走原生加权随机。
+	previousByGroup := operation_setting.GetLoadBalanceSetting().ByGroup
+	operation_setting.GetLoadBalanceSetting().ByGroup = map[string]string{}
+	t.Cleanup(func() {
+		operation_setting.GetLoadBalanceSetting().ByGroup = previousByGroup
+	})
 	database := setupRelayChannelDB(t)
 	require.NoError(t, database.AutoMigrate(&model.Ability{}))
 	legacy := &model.Channel{Name: "legacy-http", Key: "sk-test", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Group: "default", Models: "ws-model", Priority: common.GetPointer(int64(10))}

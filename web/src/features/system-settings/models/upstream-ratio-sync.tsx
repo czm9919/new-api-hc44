@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckSquare, RefreshCcw } from 'lucide-react'
+import { CheckSquare, RefreshCcw, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -25,6 +25,13 @@ import { toast } from 'sonner'
 import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   buildPricingChanges,
   getModelPricing,
@@ -45,7 +52,12 @@ import {
 } from '@/lib/server-error-message'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
-import { fetchUpstreamRatios, getUpstreamChannels } from '../api'
+import {
+  fetchUpstreamRatios,
+  getOfficialPricingStatus,
+  getUpstreamChannels,
+  refreshOfficialPricing,
+} from '../api'
 import type {
   DifferencesMap,
   PricingSyncModels,
@@ -60,10 +72,17 @@ import {
 } from './conflict-confirm-dialog'
 import {
   DEFAULT_ENDPOINT,
+  LITELLM_PRESET_ENDPOINT,
+  LITELLM_PRESET_ID,
   MODELS_DEV_PRESET_ENDPOINT,
   MODELS_DEV_PRESET_ID,
   OFFICIAL_CHANNEL_ENDPOINT,
   OFFICIAL_CHANNEL_ID,
+  OFFICIAL_CHANNEL_NAME,
+  OFFICIAL_MERGED_PRESET_BASE_URL,
+  OFFICIAL_MERGED_PRESET_ENDPOINT,
+  OFFICIAL_MERGED_PRESET_ID,
+  OFFICIAL_MERGED_PRESET_NAME,
   OPENROUTER_CHANNEL_TYPE,
   OPENROUTER_ENDPOINT,
 } from './constants'
@@ -82,6 +101,9 @@ import { UpstreamRatioSyncTable } from './upstream-ratio-sync-table'
 
 function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
   if (channel.id === MODELS_DEV_PRESET_ID) return MODELS_DEV_PRESET_ENDPOINT
+  if (channel.id === LITELLM_PRESET_ID) return LITELLM_PRESET_ENDPOINT
+  if (channel.id === OFFICIAL_MERGED_PRESET_ID)
+    return OFFICIAL_MERGED_PRESET_ENDPOINT
   if (channel.id === OFFICIAL_CHANNEL_ID) return OFFICIAL_CHANNEL_ENDPOINT
   if (channel.type === OPENROUTER_CHANNEL_TYPE) return OPENROUTER_ENDPOINT
   return DEFAULT_ENDPOINT
@@ -92,6 +114,61 @@ type SyncPreview = {
   changes: ModelPricingChange[]
   resolutions: Record<string, PricingSyncValues>
   exchangeRateSummary?: string
+}
+
+type SyncSelection = { source: string; adjustment: PriceAdjustment }
+type SyncSelectionMap = Record<string, SyncSelection>
+
+/**
+ * 一键同步官方定价的范围：
+ * - missing：只给「本站还没定价」的模型补官方价，绝不覆盖人工调过的倍率；
+ * - all：严格按官方价覆盖所有能对上的模型。
+ */
+type OfficialSyncScope = 'missing' | 'all'
+
+type StatusTranslate = (
+  key: string,
+  options?: Record<string, unknown>
+) => string
+
+/** 「多久之前」的人话版本，和价格榜保持同一套说法。 */
+function formatSyncAge(t: StatusTranslate, seconds?: number): string {
+  if (seconds === undefined || seconds < 0) {
+    return '—'
+  }
+  if (seconds < 60) {
+    return t('just now')
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return t('{{count}} min ago', { count: minutes })
+  }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return t('{{count}} h ago', { count: hours })
+  }
+  return t('{{count}} d ago', { count: Math.floor(hours / 24) })
+}
+
+/** 同步间隔：秒 -> 「6 h」/「30 min」。 */
+function formatSyncInterval(t: StatusTranslate, seconds?: number): string {
+  if (!seconds || seconds <= 0) {
+    return '—'
+  }
+  if (seconds < 3600) {
+    return t('{{count}} min', { count: Math.max(1, Math.round(seconds / 60)) })
+  }
+  return t('{{count}} h', { count: Math.round(seconds / 3600) })
+}
+
+/** 官方预设在上游结果里的键名是「名称(ID)」，这里只按名称前缀认源。 */
+function findOfficialSource(
+  upstreams: Record<string, unknown> | undefined
+): string | undefined {
+  if (!upstreams) return undefined
+  return Object.keys(upstreams).find((name) =>
+    name.startsWith(OFFICIAL_CHANNEL_NAME)
+  )
 }
 
 export function UpstreamRatioSync() {
@@ -113,9 +190,9 @@ export function UpstreamRatioSync() {
   >({})
   const [differences, setDifferences] = useState<DifferencesMap>({})
   const [prices, setPrices] = useState<PricingSyncModels>({})
-  const [selections, setSelections] = useState<
-    Record<string, { source: string; adjustment: PriceAdjustment }>
-  >({})
+  const [selections, setSelections] = useState<SyncSelectionMap>({})
+  const [officialScope, setOfficialScope] =
+    useState<OfficialSyncScope>('missing')
   const selectedSources = useMemo(
     () =>
       Object.fromEntries(
@@ -144,6 +221,14 @@ export function UpstreamRatioSync() {
     enabled: channelDialogOpen,
   })
   const channels = useMemo(() => channelsData?.data ?? [], [channelsData?.data])
+  // 官方价快照的自动同步状态（hc42）：显示间隔、上次同步时间、是否有源在吃旧数据。
+  const { data: officialStatusData } = useQuery({
+    queryKey: ['official-pricing-status'],
+    queryFn: async () => requireServerSuccess(await getOfficialPricingStatus()),
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  })
+  const officialStatus = officialStatusData?.data
   useEffect(() => {
     if (!channels.length) return
     setChannelEndpoints((previous) => {
@@ -250,6 +335,13 @@ export function UpstreamRatioSync() {
       } catch (error) {
         handleServerError(error, t('Reload pricing'))
       }
+      // 顺手刷新官方价快照，让 /rankings 的价格榜立刻能显示官方对比列。
+      // 快照失败不影响已经落库的定价，因此只记录不打断。
+      try {
+        await refreshOfficialPricing()
+      } catch {
+        // ignore
+      }
     },
     onError: (error: Error) =>
       handleServerError(error, t('Failed to sync prices')),
@@ -318,70 +410,198 @@ export function UpstreamRatioSync() {
     },
     []
   )
+  /**
+   * 把一组选择冻结成待确认的改动。手动同步与一键同步共用同一条路径，
+   * 保证两者写库的 payload 完全一致。
+   */
+  const openSyncPreview = useCallback(
+    (
+      selectionMap: SyncSelectionMap,
+      priceMap: PricingSyncModels,
+      baseline: ModelPricingConfig
+    ) => {
+      const resolutions: Record<string, PricingSyncValues> = {}
+      const conflicts: ConflictItem[] = []
+      for (const [model, entry] of Object.entries(selectionMap)) {
+        const row = priceMap[model]
+        const upstream = row?.upstreams[entry.source]
+        if (!row || !upstream) continue
+        const adjusted = adjustSyncPrice(upstream, entry.adjustment, rate)
+        const selected = adjusted.values
+        if (!selected) continue
+        resolutions[model] = selected
+        let adjustment = t('Keep source price')
+        if (entry.adjustment === 'divide') {
+          adjustment = t('Divide by exchange rate (÷ {{rate}})', {
+            rate: String(rate),
+          })
+        }
+        if (entry.adjustment === 'multiply') {
+          adjustment = t('Multiply by exchange rate (× {{rate}})', {
+            rate: String(rate),
+          })
+        }
+        conflicts.push({
+          model,
+          channel: getUpstreamDisplayName(entry.source, t),
+          current: describeSyncPrice(row.current, t),
+          newVal: describeSyncPrice(selected, t),
+          adjustment,
+          siteVal:
+            isValidPricingCurrency(currency) &&
+            (selected.billing_mode !== 'tiered_expr' ||
+              getSyncExpressionPricing(String(selected.billing_expr), t))
+              ? describeSyncPrice(selected, t, currency)
+              : undefined,
+        })
+      }
+      if (!Object.keys(resolutions).length) {
+        toast.info(t('No price differences found'))
+        return
+      }
+      try {
+        const after = applyPriceSyncSelections(baseline.options, resolutions)
+        // Freeze the exact save payload and its preview together. Changes to the
+        // site exchange rate while this dialog is open cannot change the charge.
+        setPreview({
+          conflicts,
+          resolutions,
+          changes: buildPricingChanges(baseline, baseline.options, after),
+          exchangeRateSummary: isValidPricingCurrency(currency)
+            ? t('Current exchange rate: 1 USD = {{rate}} {{currency}}', {
+                rate: String(rate),
+                currency: currency.label,
+              })
+            : undefined,
+        })
+        syncMutation.reset()
+        setConflictDialogOpen(true)
+      } catch (error) {
+        handleServerError(error, t('Failed to sync prices'))
+      }
+    },
+    [t, rate, currency, syncMutation]
+  )
+
   const handleApplySync = () => {
     if (!pricingBaseline || hasAdjustmentErrors) return
-    const resolutions: Record<string, PricingSyncValues> = {}
-    const conflicts: ConflictItem[] = []
-    for (const [model, entry] of Object.entries(selections)) {
-      const selected = adjustedPrices[model]?.values
-      const row = prices[model]
-      if (!row || !selected) return
-      resolutions[model] = selected
-      let adjustment = t('Keep source price')
-      if (entry.adjustment === 'divide') {
-        adjustment = t('Divide by exchange rate (÷ {{rate}})', {
-          rate: String(rate),
-        })
-      }
-      if (entry.adjustment === 'multiply') {
-        adjustment = t('Multiply by exchange rate (× {{rate}})', {
-          rate: String(rate),
-        })
-      }
-      conflicts.push({
-        model,
-        channel: getUpstreamDisplayName(entry.source, t),
-        current: describeSyncPrice(row.current, t),
-        newVal: describeSyncPrice(selected, t),
-        adjustment,
-        siteVal:
-          isValidPricingCurrency(currency) &&
-          (selected.billing_mode !== 'tiered_expr' ||
-            getSyncExpressionPricing(String(selected.billing_expr), t))
-            ? describeSyncPrice(selected, t, currency)
-            : undefined,
-      })
-    }
-    try {
-      const after = applyPriceSyncSelections(
-        pricingBaseline.options,
-        resolutions
-      )
-      // Freeze the exact save payload and its preview together. Changes to the
-      // site exchange rate while this dialog is open cannot change the charge.
-      setPreview({
-        conflicts,
-        resolutions,
-        changes: buildPricingChanges(
-          pricingBaseline,
-          pricingBaseline.options,
-          after
-        ),
-        exchangeRateSummary: isValidPricingCurrency(currency)
-          ? t('Current exchange rate: 1 USD = {{rate}} {{currency}}', {
-              rate: String(rate),
-              currency: currency.label,
-            })
-          : undefined,
-      })
-      syncMutation.reset()
-      setConflictDialogOpen(true)
-    } catch (error) {
-      handleServerError(error, t('Failed to sync prices'))
-    }
+    openSyncPreview(selections, prices, pricingBaseline)
   }
+
+  /**
+   * 一键同步官方定价：拉官方预设 → 自动全选 → 直接进确认弹窗。
+   * 「仅补缺失」不会覆盖人工调过的价格，是更安全的默认值。
+   */
+  const officialSyncMutation = useMutation({
+    mutationFn: async (scope: OfficialSyncScope) => {
+      const baseline = await getModelPricing()
+      const response = await fetchUpstreamRatios({
+        // 合并预设：后端把 basellm / models.dev / LiteLLM 三源官方价合成一份，
+        // 并按本站模型名出键，一次就能覆盖尽量多的模型（不再只吃 basellm）。
+        upstreams: [
+          {
+            id: OFFICIAL_MERGED_PRESET_ID,
+            name: OFFICIAL_MERGED_PRESET_NAME,
+            base_url: OFFICIAL_MERGED_PRESET_BASE_URL,
+            endpoint: OFFICIAL_MERGED_PRESET_ENDPOINT,
+          },
+        ],
+        timeout: 25,
+        include_unchanged: true,
+      })
+      if (!response.success || !response.data?.prices) {
+        throw createServerError(response, t('Failed to fetch upstream prices'))
+      }
+      const failures = response.data.test_results.filter(
+        (result) => result.status === 'error'
+      )
+      if (failures.length) {
+        throw new Error(
+          failures
+            .map(
+              (result) =>
+                `${getUpstreamDisplayName(result.name, t)}: ${result.error}`
+            )
+            .join(', ')
+        )
+      }
+      const selectionMap: SyncSelectionMap = {}
+      for (const [model, row] of Object.entries(response.data.prices)) {
+        const source = findOfficialSource(row.upstreams)
+        if (!source) continue
+        const hasCurrentPrice = Object.keys(row.current ?? {}).some(
+          (key) => key !== 'billing_mode' && key !== 'billing_expr'
+        )
+        if (scope === 'missing' && hasCurrentPrice) continue
+        selectionMap[model] = { source, adjustment: 'keep' }
+      }
+      return {
+        baseline,
+        prices: response.data.prices,
+        differences: response.data.differences,
+        selectionMap,
+      }
+    },
+    onSuccess: ({ baseline, prices: fetched, differences: diffs, selectionMap }) => {
+      setPricingBaseline(baseline)
+      setPrices(fetched)
+      setDifferences(diffs)
+      setSelections(selectionMap)
+      if (!Object.keys(selectionMap).length) {
+        toast.success(t('No price differences found'))
+        return
+      }
+      openSyncPreview(selectionMap, fetched, baseline)
+      // 同时刷新官方价快照，/rankings 的价格榜立刻能显示官方对比列。
+      void refreshOfficialPricing().catch(() => {
+        // 快照刷新失败不影响本次定价同步
+      })
+    },
+    onError: (error: Error) =>
+      handleServerError(error, t('Failed to fetch upstream prices')),
+  })
+  const officialStatusLine = useMemo(() => {
+    if (!officialStatus) {
+      return null
+    }
+    if (!officialStatus.official_available) {
+      return t('Official prices have not been synced yet')
+    }
+    const parts: string[] = []
+    if (officialStatus.auto_sync) {
+      parts.push(
+        t('Auto-sync every {{interval}}', {
+          interval: formatSyncInterval(t, officialStatus.sync_interval),
+        })
+      )
+    } else {
+      parts.push(t('Auto-sync is off; only the button refreshes it'))
+    }
+    if (officialStatus.age_seconds !== undefined) {
+      parts.push(
+        t('last synced {{age}}', {
+          age: formatSyncAge(t, officialStatus.age_seconds),
+        })
+      )
+    }
+    if (officialStatus.stale) {
+      parts.push(t('refreshing in background'))
+    }
+    if (officialStatus.carried && officialStatus.carried.length > 0) {
+      parts.push(
+        t('{{sources}} fetch failed, using the previous data', {
+          sources: officialStatus.carried.join(', '),
+        })
+      )
+    }
+    return parts.join(' · ')
+  }, [officialStatus, t])
+
   const isLoading =
-    loadingBaseline || fetchMutation.isPending || syncMutation.isPending
+    loadingBaseline ||
+    fetchMutation.isPending ||
+    syncMutation.isPending ||
+    officialSyncMutation.isPending
   const selectedModels = Object.keys(selections)
   const batchAdjustmentDisabled =
     isLoading || selectedModels.length === 0 || rate === null
@@ -422,14 +642,64 @@ export function UpstreamRatioSync() {
         ) : (
           <UpstreamRatioSyncTable
             toolbar={
-              <Button
-                variant='outline'
-                onClick={() => setChannelDialogOpen(true)}
-                disabled={isLoading}
-              >
-                <RefreshCcw className='size-4' aria-hidden />
-                {t('Select price sources')}
-              </Button>
+              <div className='flex flex-wrap items-center gap-2'>
+                <Select
+                  items={[
+                    {
+                      value: 'missing',
+                      label: t('Only fill unpriced models'),
+                    },
+                    {
+                      value: 'all',
+                      label: t('Overwrite all with official'),
+                    },
+                  ]}
+                  value={officialScope}
+                  onValueChange={(value) =>
+                    setOfficialScope(value as OfficialSyncScope)
+                  }
+                  disabled={isLoading}
+                >
+                  <SelectTrigger
+                    aria-label={t('Official sync scope')}
+                    className='w-48'
+                    size='sm'
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectItem value='missing'>
+                      {t('Only fill unpriced models')}
+                    </SelectItem>
+                    <SelectItem value='all'>
+                      {t('Overwrite all with official')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={() => officialSyncMutation.mutate(officialScope)}
+                  disabled={isLoading}
+                  title={t(
+                    'Fetch the official price list and apply it in one click'
+                  )}
+                >
+                  <Sparkles className='size-4' aria-hidden />
+                  {t('One-click official sync')}
+                </Button>
+                <Button
+                  variant='outline'
+                  onClick={() => setChannelDialogOpen(true)}
+                  disabled={isLoading}
+                >
+                  <RefreshCcw className='size-4' aria-hidden />
+                  {t('Select price sources')}
+                </Button>
+                {officialStatusLine && (
+                  <span className='text-muted-foreground w-full text-xs sm:w-auto'>
+                    {officialStatusLine}
+                  </span>
+                )}
+              </div>
             }
             prices={prices}
             differences={differences}

@@ -399,8 +399,9 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
-		// 免费额度白名单外的分组，只有付费余额可用（quota - free_quota）。
-		useFreeQuota := model.IsFreeQuotaAllowedGroup(relayInfo.UsingGroup)
+		// 免费额度白名单（分组 hc17 + 模型 hc31-B89）之外的计费，
+		// 只有付费余额可用（quota - free_quota）。
+		useFreeQuota := relayFreeQuotaUsable(relayInfo)
 		available := userQuota
 		if !useFreeQuota {
 			if freeQuota, ferr := model.GetUserFreeQuota(relayInfo.UserId); ferr == nil && freeQuota > 0 {
@@ -410,6 +411,17 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		if available <= 0 {
 			return nil, types.NewErrorWithStatusCode(
 				errors.New(i18n.T(c, i18n.MsgQuotaUserInsufficient, map[string]any{"Remaining": logger.FormatQuota(userQuota)})),
+				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
+		// B96：最低余额门槛。余额为正但低于门槛（可为负值，表达欠费宽限）时
+		// 拒绝新请求，防止结算补扣把余额越拖越深。
+		if minQuota := operation_setting.MinWalletQuota(); minQuota > 0 && float64(available) < minQuota {
+			return nil, types.NewErrorWithStatusCode(
+				errors.New(i18n.T(c, i18n.MsgQuotaBelowMinWallet, map[string]any{
+					"Remaining": logger.FormatQuota(userQuota),
+					"Min":       logger.FormatQuota(int(minQuota)),
+				})),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}

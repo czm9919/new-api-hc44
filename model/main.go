@@ -40,6 +40,12 @@ func jsonScanBytes(value any) []byte {
 	}
 }
 
+// InitColumnNames 显式初始化列名引用（InitDB 内部会调用）。
+// 直接注入内存库的单测也可调用，避免拼出空列名导致 SQL 报错。
+func InitColumnNames() {
+	initCol()
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -183,7 +189,32 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 	return db, common.DatabaseTypeSQLite, err
 }
 
+// closeDBIfOpen closes the underlying connection pool of a gorm DB handle.
+// Windows cannot unlink a SQLite file whose handle is still open, so a
+// re-initialization (tests call InitDB/InitLogDB repeatedly on one TempDir)
+// must release the pool it opened last time; production initializes once.
+func closeDBIfOpen(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+}
+
+// initializedDB / initializedLogDB remember the pools the last init opened, so a
+// repeated init closes only its own previous pool and never a handle the caller
+// assigned to DB directly (tests hand in their own database before calling).
+var (
+	initializedDB    *gorm.DB
+	initializedLogDB *gorm.DB
+)
+
 func InitDB() (err error) {
+	if initializedDB != nil && initializedDB == DB {
+		closeDBIfOpen(initializedDB)
+	}
+	initializedDB = nil
 	db, dbType, err := chooseDB("SQL_DSN", false)
 	if err == nil {
 		common.SetMainDatabaseType(dbType)
@@ -195,6 +226,7 @@ func InitDB() (err error) {
 			db = db.Debug()
 		}
 		DB = db
+		initializedDB = DB
 		// MySQL charset/collation startup check: ensure Chinese-capable charset
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			if err := checkMySQLChineseSupport(DB); err != nil {
@@ -234,6 +266,12 @@ func InitDB() (err error) {
 
 func InitLogDB() (err error) {
 	if os.Getenv("LOG_SQL_DSN") == "" {
+		// The standalone log pool we opened last time (if any) is about to be
+		// abandoned in favour of the main DB alias — release it.
+		if initializedLogDB != nil && initializedLogDB == LOG_DB && LOG_DB != DB {
+			closeDBIfOpen(initializedLogDB)
+		}
+		initializedLogDB = nil
 		LOG_DB = DB
 		common.SetLogDatabaseType(common.MainDatabaseType())
 		initCol()
@@ -244,12 +282,19 @@ func InitLogDB() (err error) {
 	}
 	db, dbType, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
+		// A repeated init closes only the pool it opened last time; the
+		// LOG_DB == DB alias (empty LOG_SQL_DSN) is owned by InitDB instead.
+		if initializedLogDB != nil && initializedLogDB == LOG_DB {
+			closeDBIfOpen(initializedLogDB)
+		}
+		initializedLogDB = nil
 		common.SetLogDatabaseType(dbType)
 		initCol()
 		if common.DebugEnabled {
 			db = db.Debug()
 		}
 		LOG_DB = db
+		initializedLogDB = LOG_DB
 		// If log DB is MySQL, also ensure Chinese-capable charset
 		if common.UsingLogDatabase(common.DatabaseTypeMySQL) {
 			if err := checkMySQLChineseSupport(LOG_DB); err != nil {
@@ -377,11 +422,20 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&Notification{},
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&InvoiceProfile{},
+		&ModelNotice{},
+		&QQBindCode{},
+		&LotterySpin{},
 	)
 	if err != nil {
+		return err
+	}
+	// users.qq 在 SQLite 上加列时老行是 NULL，先补平成空串再让业务读。
+	if err := EnsureUserQQBackfilled(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

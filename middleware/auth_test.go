@@ -530,7 +530,11 @@ func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 			}
 			// The access audit and authentication share one lookup: the
 			// credential query plus the owner's user row.
-			assert.Len(t, queries, 2)
+			// 审计哈希链（B78）在新库首次盖章时要读一次链头，那属于审计自身的
+			// 记账查询，不该算进「凭据查了几次」——单独剔除后再断言严格等于 2。
+			chainHeadQueries := countQueries("audit_logs", "hash <> ''")
+			assert.LessOrEqual(t, chainHeadQueries, 1)
+			assert.Len(t, queries, 2+chainHeadQueries)
 			assert.Equal(t, test.tokenTable, countQueries("user_access_tokens", "token_hash"))
 			assert.Equal(t, test.legacyQuery, countQueries("users", "access_token = "))
 		})
