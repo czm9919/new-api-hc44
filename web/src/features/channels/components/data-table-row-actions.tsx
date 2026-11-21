@@ -37,7 +37,7 @@ import {
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DangerConfirmDialog } from '@/components/danger-confirm-dialog'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -373,7 +373,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <ConfirmDialog
+      <DangerConfirmDialog
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title={t('Delete Channel')}
@@ -381,8 +381,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           'Are you sure you want to delete channel "{{name}}"? This action cannot be undone.',
           { name: channel.name }
         )}
+        objectName={channel.name}
+        objectLabel={t('channel name')}
         confirmText={t('Delete')}
-        destructive
         handleConfirm={() => {
           if (!canEditSensitive) return
           handleDeleteChannel(channel.id, queryClient)

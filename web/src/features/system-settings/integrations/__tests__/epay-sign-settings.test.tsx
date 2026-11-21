@@ -83,6 +83,7 @@ function PaymentFixture(props: { values: PaymentValues }) {
           WaffoPancakeMerchantID: '',
           WaffoPancakePrivateKey: '',
           WaffoPancakeReturnURL: '',
+          WaffoPancakeExchangeRate: 0,
         }}
         complianceDefaults={{
           confirmed: true,

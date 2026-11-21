@@ -185,28 +185,28 @@ func RealNameGate(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 
 // RealNameSelfStatus 前台个人资料页状态。
 type RealNameSelfStatus struct {
-	Enabled        bool   `json:"enabled"`
-	Method         string `json:"method"`
-	NeedLevel      int    `json:"need_level"`
-	AchievedLevel  int    `json:"achieved_level"`
-	Verified       bool   `json:"verified"`
-	Status         string `json:"status"`
-	PhoneBound     bool   `json:"phone_bound"`
-	PhoneMasked    string `json:"phone_masked"`
-	NameMasked     string `json:"name_masked"`
-	IdNoMasked     string `json:"id_no_masked"`
-	Provider       string `json:"provider"`
-	VerifiedAt     int64  `json:"verified_at"`
-	ReviewNote     string `json:"review_note"`
-	NoticeText     string `json:"notice_text"`
-	BlockRelay     bool   `json:"block_relay"`
-	BlockTopup     bool   `json:"block_topup"`
+	Enabled       bool   `json:"enabled"`
+	Method        string `json:"method"`
+	NeedLevel     int    `json:"need_level"`
+	AchievedLevel int    `json:"achieved_level"`
+	Verified      bool   `json:"verified"`
+	Status        string `json:"status"`
+	PhoneBound    bool   `json:"phone_bound"`
+	PhoneMasked   string `json:"phone_masked"`
+	NameMasked    string `json:"name_masked"`
+	IdNoMasked    string `json:"id_no_masked"`
+	Provider      string `json:"provider"`
+	VerifiedAt    int64  `json:"verified_at"`
+	ReviewNote    string `json:"review_note"`
+	NoticeText    string `json:"notice_text"`
+	BlockRelay    bool   `json:"block_relay"`
+	BlockTopup    bool   `json:"block_topup"`
 }
 
 func RealNameSelfStatusOf(c *gin.Context, uid int) *RealNameSelfStatus {
 	st := &RealNameSelfStatus{
-		Enabled:  setting.RealNameEnabled,
-		Method:   setting.RealNameMethod,
+		Enabled:    setting.RealNameEnabled,
+		Method:     setting.RealNameMethod,
 		NoticeText: setting.RealNameNoticeText,
 		BlockRelay: setting.RealNameBlockRelay,
 		BlockTopup: setting.RealNameBlockTopup,

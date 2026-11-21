@@ -15,7 +15,7 @@ name: new-api
 services:
   new-api:
     # 换版本时只改 .env 里的 IMAGE，不用动这个文件
-    image: ${IMAGE:-delta-api/new-api:v1.0.0-rc.43-hc26}
+    image: ${IMAGE:-delta-api/new-api:v1.0.0-rc.51-hc38}
     container_name: new-api
     restart: unless-stopped
 

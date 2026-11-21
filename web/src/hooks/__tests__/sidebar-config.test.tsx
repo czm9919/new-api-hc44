@@ -108,8 +108,13 @@ describe('security sidebar visibility', () => {
       'Wallet',
       'Profile',
       'Security & Access',
+      // hc31 新增：站内通知中心 + 密钥风险自查
+      'Notifications',
+      'Key Risk Check',
       // 本站定制新增：号池
       'Key Pool',
+      // hc37 新增：幸运轮盘
+      'Lucky Wheel',
     ])
     expect(
       result.current

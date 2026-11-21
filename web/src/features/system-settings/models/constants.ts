@@ -42,6 +42,22 @@ export const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设'
 export const MODELS_DEV_PRESET_BASE_URL = 'https://models.dev'
 export const MODELS_DEV_PRESET_ENDPOINT = 'https://models.dev/api.json'
 
+export const LITELLM_PRESET_ID = -102
+export const LITELLM_PRESET_NAME = 'LiteLLM 价格预设'
+export const LITELLM_PRESET_BASE_URL = 'https://raw.githubusercontent.com'
+export const LITELLM_PRESET_ENDPOINT =
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
+
+/**
+ * 三源合并预设：后端把 basellm + models.dev + LiteLLM 的官方价合成一份，
+ * 并按「本站自己的模型名」出键，所以一次请求就能覆盖最多模型。
+ * 名字刻意以 OFFICIAL_CHANNEL_NAME 开头，`findOfficialSource` 才认得出它。
+ */
+export const OFFICIAL_MERGED_PRESET_ID = -103
+export const OFFICIAL_MERGED_PRESET_NAME = '官方倍率预设 · 合并官方价'
+export const OFFICIAL_MERGED_PRESET_BASE_URL = 'https://official.pricing.local'
+export const OFFICIAL_MERGED_PRESET_ENDPOINT = 'official-merged'
+
 export const OPENROUTER_ENDPOINT = 'openrouter'
 
 // Backend channel type for OpenRouter (see constant/channel.go: ChannelTypeOpenRouter = 20)

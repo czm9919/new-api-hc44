@@ -88,11 +88,16 @@ func redisRateLimitHandler(subject string, duration int64, totalMaxCount, succes
 		successKey := fmt.Sprintf("rateLimit:%s:%s", ModelRequestRateLimitSuccessCountMark, subject)
 		allowed, err := checkRedisRateLimit(ctx, rdb, successKey, successMaxCount, duration)
 		if err != nil {
-			fmt.Println(common.LogText("failed to check the successful request limit: %s", err.Error()))
-			abortWithOpenAiMessage(c, http.StatusInternalServerError, "rate_limit_check_failed")
+			// v1.1.0 M2 · B12：Redis 出错时显式降级到内存实现，而不是 500。
+			// 内存版计数口径与 Redis 版一致（同 subject/窗口），降级期间限流
+			// 语义不放松；Redis 恢复后按成功调用清零失败计数。
+			fmt.Println(common.LogText("failed to check the successful request limit, falling back to memory limiter: %s", err.Error()))
+			common.MarkRedisFailure("model_rate_limit_success", err)
+			memoryRateLimitHandler(subject, duration, totalMaxCount, successMaxCount)(c)
 			return
 		}
 		if !allowed {
+			common.MarkRedisSuccess()
 			abortWithOpenAiMessage(c, http.StatusTooManyRequests, i18n.T(c, i18n.MsgRateLimitReached, map[string]any{"Minutes": setting.ModelRequestRateLimitDurationMinutes, "Max": successMaxCount}))
 			return
 		}
@@ -111,8 +116,9 @@ func redisRateLimitHandler(subject string, duration int64, totalMaxCount, succes
 			)
 
 			if err != nil {
-				fmt.Println(common.LogText("failed to check the total request limit: %s", err.Error()))
-				abortWithOpenAiMessage(c, http.StatusInternalServerError, "rate_limit_check_failed")
+				fmt.Println(common.LogText("failed to check the total request limit, falling back to memory limiter: %s", err.Error()))
+				common.MarkRedisFailure("model_rate_limit_total", err)
+				memoryRateLimitHandler(subject, duration, totalMaxCount, successMaxCount)(c)
 				return
 			}
 
@@ -121,6 +127,9 @@ func redisRateLimitHandler(subject string, duration int64, totalMaxCount, succes
 				return
 			}
 		}
+
+		// 到这里 Redis 两次判定都成功，健康状态记一次成功（B12）。
+		common.MarkRedisSuccess()
 
 		// 4. 处理请求
 		c.Next()

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Link } from '@tanstack/react-router'
+import { Coins, Grid2x2Check, ScanSearch } from 'lucide-react'
 /*
  * 扩展设置（管理员可见）：本二开系列新增功能的统一设置入口。
  *
@@ -36,18 +38,21 @@ For commercial licensing, please contact support@quantumnous.com
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { Coins, Grid2x2Check, ScanSearch } from 'lucide-react'
 
+import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { SectionPageLayout } from '@/components/layout'
-
 import {
   getKeyPoolSettings,
   updateKeyPoolSettings,
@@ -56,6 +61,7 @@ import {
 
 import { BalanceDisplayCard } from './balance-display-card'
 import { CustomHeadCard } from './custom-head-card'
+import { LabCard } from './lab-card'
 import { NavCustomCard } from './nav-custom-card'
 import { describeSaveFailure } from './save-error'
 
@@ -82,16 +88,41 @@ function IsolationCard(props: {
             props.patch({ free_quota_allowed_groups: e.target.value })
           }
         />
-        <ul className='list-disc space-y-1 pl-5 text-xs text-muted-foreground'>
+        <ul className='text-muted-foreground list-disc space-y-1 pl-5 text-xs'>
           <li>列出的分组 = 免费分组：签到等免费额度只在白名单内的分组消耗。</li>
           <li>
-            白名单外的分组 = <strong>付费分组</strong>：只扣付费余额，付费不足则请求失败。
+            白名单外的分组 = <strong>付费分组</strong>
+            ：只扣付费余额，付费不足则请求失败。
           </li>
           <li>
-            号池发放的免费级 key 只能路由到白名单内的分组，调白名单外的分组时自动改绑。
+            号池发放的免费级 key
+            只能路由到白名单内的分组，调白名单外的分组时自动改绑。
           </li>
-          <li>填写的分组 key 需与「分组倍率」里配置的分组名一致（逗号分隔）。</li>
+          <li>
+            填写的分组 key 需与「分组倍率」里配置的分组名一致（逗号分隔）。
+          </li>
         </ul>
+        <div className='space-y-1.5 pt-2'>
+          <Label className='text-sm font-medium'>免费模型白名单</Label>
+          <Input
+            value={props.settings.free_quota_allowed_models}
+            placeholder='留空表示不限制，例如：gpt-4o-mini,claude-3-*'
+            onChange={(e) =>
+              props.patch({ free_quota_allowed_models: e.target.value })
+            }
+          />
+          <ul className='text-muted-foreground list-disc space-y-1 pl-5 text-xs'>
+            <li>列出的模型 = 免费可跑：免费额度只在白名单内的模型上消耗。</li>
+            <li>
+              支持 <code>prefix*</code> 前缀通配（如 <code>gpt-4o*</code>
+              ），也支持写完整模型名。
+            </li>
+            <li>
+              与分组白名单是<strong>同时满足</strong>
+              关系：分组在大名单内、模型不在 白名单内，仍然扣付费余额。
+            </li>
+          </ul>
+        </div>
       </CardContent>
     </Card>
   )
@@ -123,7 +154,7 @@ function KeyPoolCard(props: {
               patch({ default_daily_gift_quota: Number(e.target.value) || 0 })
             }
           />
-          <p className='text-xs text-muted-foreground'>
+          <p className='text-muted-foreground text-xs'>
             用户贡献密钥后，每个号池 Token 每天赠送的额度；每日 00:00
             （北京时间）自动重置回该值。设为 0 则不赠送。
           </p>
@@ -144,7 +175,7 @@ function KeyPoolCard(props: {
               })
             }
           />
-          <p className='text-xs text-muted-foreground'>
+          <p className='text-muted-foreground text-xs'>
             防止用户一次自助签发大量 Token。运营侧生成号池不受此限制。
           </p>
         </div>
@@ -152,7 +183,7 @@ function KeyPoolCard(props: {
         <div className='flex items-start justify-between gap-4 rounded-lg border p-3'>
           <div className='space-y-0.5'>
             <Label className='text-sm font-medium'>开放用户自助贡献</Label>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               关闭后用户侧「贡献密钥」入口将不可用，号池只由运营在后台发放。
             </p>
           </div>
@@ -165,7 +196,7 @@ function KeyPoolCard(props: {
         <div className='flex items-start justify-between gap-4 rounded-lg border p-3'>
           <div className='space-y-0.5'>
             <Label className='text-sm font-medium'>自动绑定上游模型列表</Label>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               开启时自动拉取上游 /v1/models 作为渠道可用模型；同时控制巡检前是否
               自动刷新号池渠道的上游全量模型。关闭后模型列表需手填。
             </p>
@@ -208,16 +239,19 @@ function InspectionCard(props: {
             <Label className='text-sm font-medium'>
               单模型自动检查与自动下架
             </Label>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               开启后巡检逐个模型探测（号池渠道会先拉取上游全量模型列表再逐个检测）：
               上游明确告知「模型不存在/未授权」时自动下架该模型（不影响渠道和其他模型），
               恢复后自动重新上架。需同时开启渠道健康页的「自动测试渠道」定时任务。
-              注意：请求数等于模型数，NVIDIA 号池 85 个模型时每轮巡检约 85 个请求。
+              注意：请求数等于模型数，NVIDIA 号池 85 个模型时每轮巡检约 85
+              个请求。
             </p>
           </div>
           <Switch
             checked={props.settings.model_auto_check_enabled}
-            onCheckedChange={(v) => props.patch({ model_auto_check_enabled: v })}
+            onCheckedChange={(v) =>
+              props.patch({ model_auto_check_enabled: v })
+            }
           />
         </div>
       </CardContent>
@@ -236,12 +270,9 @@ export function EnhancedSettings() {
       .catch(() => setSettings(null))
   }, [])
 
-  const patch = useCallback(
-    (next: Partial<KeyPoolSettings>) => {
-      setSettings((prev) => (prev ? { ...prev, ...next } : prev))
-    },
-    []
-  )
+  const patch = useCallback((next: Partial<KeyPoolSettings>) => {
+    setSettings((prev) => (prev ? { ...prev, ...next } : prev))
+  }, [])
 
   const save = async () => {
     if (!settings) return
@@ -263,7 +294,9 @@ export function EnhancedSettings() {
   // 结果设置项一多就被裁掉、整页无法上下滚动。
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Extended Settings')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Extended Settings')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Actions>
         <Button onClick={save} disabled={saving || !settings}>
           {saving ? t('Saving...') : t('Save all settings')}
@@ -271,7 +304,7 @@ export function EnhancedSettings() {
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='mx-auto w-full max-w-4xl space-y-4 pb-4'>
-          <p className='text-sm text-muted-foreground'>
+          <p className='text-muted-foreground text-sm'>
             本站新增功能的统一设置入口，保存即生效。
           </p>
 
@@ -283,6 +316,9 @@ export function EnhancedSettings() {
 
           {/* 余额显示配置同样独立保存，管理员可决定付费/免费余额怎么展示 */}
           <BalanceDisplayCard />
+
+          {/* 自研实验室展示页（/lab）：纯展示 + 求赞助，与主站业务零关联 */}
+          <LabCard />
 
           {!settings ? (
             <Skeleton className='h-64 w-full' />

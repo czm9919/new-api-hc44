@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/topupevents"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -14,15 +15,21 @@ import (
 
 type TopUp struct {
 	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
+	UserId          int     `json:"user_id" gorm:"index;index:idx_top_ups_user_create_time,priority:1"`
 	Amount          int64   `json:"amount"`
 	Money           float64 `json:"money"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	// CreateTime 上挂复合索引 (user_id, create_time)：用户订单列表恒按
+	// 「user_id = ? AND create_time >= ?」过滤（v1.1.0 M1 · B07），单独的
+	// user_id 索引在时间窗口查询上要回表过滤，复合索引一次命中。
+	CreateTime   int64  `json:"create_time" gorm:"index:idx_top_ups_user_create_time,priority:2"`
+	CompleteTime int64  `json:"complete_time"`
+	Status       string `json:"status"`
+	// Remark 是运营给订单留的交接说明（v1.1.0 M2 · B59）。只由管理员写入，
+	// 不对买家展示；长度上限在 controller 侧校验。
+	Remark string `json:"remark" gorm:"type:varchar(255);default:''"`
 }
 
 const (
@@ -32,6 +39,23 @@ const (
 	PaymentMethodWaffoPancake = "waffo_pancake"
 	PaymentMethodBalance      = "balance"
 )
+
+// publishTopUpStatusChange 把一次订单状态迁移广播给该用户的 SSE 订阅者
+// （v1.1.0 M1 · B14）。在事务提交成功后调用；推送本身非阻塞，失败不影响
+// 下单/到账主流程，SSE 端的快照兜底会追平任何漏推。
+func publishTopUpStatusChange(topUp *TopUp) {
+	if topUp == nil {
+		return
+	}
+	topupevents.Publish(topUp.UserId, topupevents.Event{
+		TradeNo:      topUp.TradeNo,
+		Status:       topUp.Status,
+		Amount:       topUp.Amount,
+		Money:        topUp.Money,
+		CreateTime:   topUp.CreateTime,
+		CompleteTime: topUp.CompleteTime,
+	})
+}
 
 const (
 	PaymentProviderEpay         = "epay"
@@ -153,7 +177,8 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		refCol = `"trade_no"`
 	}
 
-	return DB.Transaction(func(tx *gorm.DB) error {
+	var updated *TopUp
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return ErrTopUpNotFound
@@ -166,8 +191,16 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		}
 
 		topUp.Status = targetStatus
-		return tx.Save(topUp).Error
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+		updated = topUp
+		return nil
 	})
+	if err == nil {
+		publishTopUpStatusChange(updated)
+	}
+	return err
 }
 
 // RechargeEpay 原子完成易支付订单：订单行锁、状态校验、成功更新与用户额度增加
@@ -226,6 +259,8 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	if alreadyDone {
 		return true, nil
 	}
+	publishTopUpStatusChange(topUp)
+	afterTopUpQuotaCommitted(topUp.UserId)
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("epay topup"))
 
 	common.SysLog(common.LogText("Epay top-up succeeded trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
@@ -282,6 +317,8 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		common.SysError(common.LogText("topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
+	publishTopUpStatusChange(topUp)
+	afterTopUpQuotaCommitted(topUp.UserId)
 	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("stripe topup"))
 
 	RecordTopupLog(topUp.UserId, common.NewMessage("Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quota), "amount": topUp.Amount}), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
@@ -461,6 +498,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var completed *TopUp
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -510,12 +548,15 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod
+		completed = topUp
 		return nil
 	})
 
 	if err != nil {
 		return err
 	}
+	publishTopUpStatusChange(completed)
+	afterTopUpQuotaCommitted(completed.UserId)
 
 	// 事务外记录日志，避免阻塞
 	syncCreditUserQuotaCache(userId, quotaToAdd, common.LogText("manual topup"))
@@ -587,6 +628,8 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		common.SysError(common.LogText("creem topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
+	publishTopUpStatusChange(topUp)
+	afterTopUpQuotaCommitted(topUp.UserId)
 	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("creem topup"))
 
 	RecordTopupLog(topUp.UserId, common.NewMessage("{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"provider": "Creem", "quota": quota, "amount": fmt.Sprintf("%.2f", topUp.Money)}), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
@@ -645,6 +688,8 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		common.SysError(common.LogText("waffo topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
+	publishTopUpStatusChange(topUp)
+	afterTopUpQuotaCommitted(topUp.UserId)
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("waffo topup"))
 
 	if quotaToAdd > 0 {
@@ -705,11 +750,50 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		common.SysError(common.LogText("waffo pancake topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
+	publishTopUpStatusChange(topUp)
+	afterTopUpQuotaCommitted(topUp.UserId)
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("waffo pancake topup"))
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, common.NewMessage("{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"provider": "Waffo Pancake", "quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%.2f", topUp.Money)}))
 	}
 
+	return nil
+}
+
+// TopUpAggregate 是对账月结单（v1.1.0 M1 · B26）使用的订单聚合结果。
+type TopUpAggregate struct {
+	OrderCount int64   `gorm:"column:order_count"`
+	MoneySum   float64 `gorm:"column:money_sum"`
+	AmountSum  int64   `gorm:"column:amount_sum"`
+}
+
+// GetTopUpAggregateByStatus 汇总 [start, end) 内指定状态订单的笔数、金额
+// 与额度。status 传空串表示不过滤状态。
+func GetTopUpAggregateByStatus(start, end int64, status string) (TopUpAggregate, error) {
+	var agg TopUpAggregate
+	if DB == nil {
+		return agg, nil
+	}
+	tx := DB.Model(&TopUp{}).
+		Select("COUNT(*) AS order_count, COALESCE(SUM(money), 0) AS money_sum, COALESCE(SUM(amount), 0) AS amount_sum").
+		Where("create_time >= ? AND create_time < ?", start, end)
+	if status != "" {
+		tx = tx.Where("status = ?", status)
+	}
+	err := tx.Scan(&agg).Error
+	return agg, err
+}
+
+// UpdateTopUpRemark 更新订单备注（v1.1.0 M2 · B59）。备注是运营交接字段，
+// 任何状态（含 pending）的订单都允许补充说明；订单不存在时报错而不是静默。
+func UpdateTopUpRemark(id int, remark string) error {
+	result := DB.Model(&TopUp{}).Where("id = ?", id).Update("remark", remark)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTopUpNotFound
+	}
 	return nil
 }

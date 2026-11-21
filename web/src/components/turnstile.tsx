@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useRef } from 'react'
 
+import { loadExternalScript } from '@/lib/external-script'
+
 declare global {
   interface Window {
     turnstile?: {
@@ -60,16 +62,13 @@ export function Turnstile({
       render()
       return
     }
-    const scriptId = 'cf-turnstile'
-    if (document.getElementById(scriptId)) return
-    const s = document.createElement('script')
-    s.id = scriptId
-    s.src =
-      'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-    s.async = true
-    s.defer = true
-    s.onload = () => render()
-    document.head.appendChild(s)
+    // B140：第三方脚本统一从这里加载，强制 https 并按登记的哈希启用 SRI。
+    const script = loadExternalScript({
+      id: 'cf-turnstile',
+      src: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
+    })
+    script.addEventListener('load', render)
+    return () => script.removeEventListener('load', render)
   }, [siteKey, onVerify, onExpire])
 
   return <div ref={ref} className={className} />

@@ -36,7 +36,7 @@ test.each([
   }
 )
 
-test('an admin-configured Simple Icon still resolves through the lazy icon loader', async () => {
+test('an admin-configured Simple Icon resolves through the static asset mask', async () => {
   render(
     getPaymentIcon(
       PAYMENT_TYPES.ALIPAY,
@@ -46,5 +46,9 @@ test('an admin-configured Simple Icon still resolves through the lazy icon loade
     )
   )
   const title = await screen.findByTitle('Configured Alipay')
-  expect(title.closest('svg')).toHaveClass('h-4', 'w-4')
+  // Icons are materialized to /icons/<pack>/<Name>.svg at build time and
+  // painted through a CSS mask, so the request is one small file instead of a
+  // multi-megabyte icon pack chunk.
+  expect(title).toHaveClass('h-4', 'w-4')
+  expect(title).toHaveStyle({ maskImage: 'url("/icons/si/SiAlipay.svg")' })
 })

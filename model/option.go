@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
@@ -66,6 +67,35 @@ func InitOptionMap() {
 	common.OptionMap["VGuardEnabled"] = strconv.FormatBool(setting.VGuardEnabled)
 	common.OptionMap["VGuardStrongWords"] = setting.VGuardStrongWords
 	common.OptionMap["VGuardWeakWords"] = setting.VGuardWeakWords
+	common.OptionMap["CorsAllowOrigins"] = common.CorsAllowOrigins
+	common.OptionMap["AdminIpWhitelist"] = common.AdminIpWhitelist
+	// API 请求签名防重放（v1.1.0 M1 · B144）。
+	common.OptionMap["APISignatureRequired"] = strconv.FormatBool(common.APISignatureRequired)
+	common.OptionMap["APISignatureWindowSeconds"] = strconv.Itoa(common.APISignatureWindowSeconds)
+	// Prometheus 指标端点（v1.1.0 M1 · B08）。
+	common.OptionMap["MetricsEnabled"] = strconv.FormatBool(common.MetricsEnabled)
+	common.OptionMap["MetricsToken"] = common.MetricsToken
+	common.OptionMap["ConsumeLogAsyncEnabled"] = strconv.FormatBool(common.ConsumeLogAsyncEnabled)
+	common.OptionMap["ConsumeLogQueueSize"] = strconv.Itoa(common.ConsumeLogQueueSize)
+	common.OptionMap["ConsumeLogBatchSize"] = strconv.Itoa(common.ConsumeLogBatchSize)
+	common.OptionMap["ConsumeLogFlushIntervalMs"] = strconv.Itoa(common.ConsumeLogFlushIntervalMs)
+	// 计费可信（v1.1.0 M1 · B71/B72/B73/B82）。
+	common.OptionMap["BillingAlertEnabled"] = strconv.FormatBool(common.BillingAlertEnabled)
+	common.OptionMap["BillingAlertSingleRequestQuota"] = strconv.FormatFloat(common.BillingAlertSingleRequestQuota, 'f', -1, 64)
+	common.OptionMap["AlertNotifyMaxPerHour"] = strconv.Itoa(common.AlertNotifyMaxPerHour)
+	common.OptionMap["MonitorAlertEnabled"] = strconv.FormatBool(common.MonitorAlertEnabled)
+	common.OptionMap["MonitorAlertIntervalMinutes"] = strconv.Itoa(common.MonitorAlertIntervalMinutes)
+	common.OptionMap["MonitorChannelErrorRatePercent"] = strconv.Itoa(common.MonitorChannelErrorRatePercent)
+	common.OptionMap["MonitorChannelMinRequests"] = strconv.Itoa(common.MonitorChannelMinRequests)
+	common.OptionMap["MonitorDiskUsedPercent"] = strconv.Itoa(common.MonitorDiskUsedPercent)
+	common.OptionMap["MonitorMemoryUsedPercent"] = strconv.Itoa(common.MonitorMemoryUsedPercent)
+	common.OptionMap["UsageFallbackEnabled"] = strconv.FormatBool(common.UsageFallbackEnabled)
+	common.OptionMap["SecurityCSPDirective"] = common.SecurityCSPDirective
+	// 密码策略与登录失败锁定（v1.1.0 M1 · B77）。
+	common.OptionMap["PasswordMinLength"] = strconv.Itoa(common.PasswordMinLength)
+	common.OptionMap["PasswordRequireComplex"] = strconv.FormatBool(common.PasswordRequireComplex)
+	common.OptionMap["LoginFailureLockThreshold"] = strconv.Itoa(common.LoginFailureLockThreshold)
+	common.OptionMap["LoginFailureLockMinutes"] = strconv.Itoa(common.LoginFailureLockMinutes)
 	common.OptionMap["VGuardWeakThreshold"] = strconv.Itoa(setting.VGuardWeakThreshold)
 	common.OptionMap["VGuardWindowMinutes"] = strconv.Itoa(setting.VGuardWindowMinutes)
 	common.OptionMap["VGuardBlockHours"] = strconv.Itoa(setting.VGuardBlockHours)
@@ -263,11 +293,24 @@ func InitOptionMap() {
 	common.OptionMap["DemoSiteEnabled"] = strconv.FormatBool(operation_setting.DemoSiteEnabled)
 	common.OptionMap["SelfUseModeEnabled"] = strconv.FormatBool(operation_setting.SelfUseModeEnabled)
 	common.OptionMap["FreeQuotaAllowedGroups"] = GetFreeQuotaAllowedGroups()
+	// v1.1.0 M2 · B89 免费额度可用模型白名单（逗号分隔，支持 prefix* 通配，空=不限制）
+	common.OptionMap["FreeQuotaAllowedModels"] = GetFreeQuotaAllowedModels()
 	// 余额显示配置（hc23）：付费余额 / 免费额度在用户管理列表如何展示。
 	common.OptionMap[common.BalanceDisplaySettingOptionKey] = common.BalanceDisplaySettingDefault
 	// 自定义 Head 代码（hc24）：原样插入首页 </head> 之前，用于站长验证/统计/第三方挂件。
 	common.OptionMap[common.CustomHeadHTMLOptionKey] = ""
 	common.OptionMap["ModelRequestRateLimitEnabled"] = strconv.FormatBool(setting.ModelRequestRateLimitEnabled)
+	// v1.1.0 M2 · B57 累计充值自动升级分组：开关 + 规则 JSON（[] {group, threshold}）
+	common.OptionMap["AutoGroupUpgradeEnabled"] = strconv.FormatBool(setting.AutoGroupUpgradeEnabled)
+	common.OptionMap["AutoGroupUpgradeRules"] = ""
+	// v1.1.0 M2 · B10 单用户/单模型并发上限（0 表示不限制）
+	common.OptionMap["RelayConcurrencyLimitEnabled"] = strconv.FormatBool(setting.RelayConcurrencyLimitEnabled)
+	common.OptionMap["RelayUserConcurrencyLimit"] = strconv.Itoa(setting.RelayUserConcurrencyLimit)
+	common.OptionMap["RelayModelConcurrencyLimit"] = strconv.Itoa(setting.RelayModelConcurrencyLimit)
+	// v1.1.0 M2 · B11 上游超时可配：把原本只有环境变量能改的两个超时暴露到运维台。
+	// 环境变量仍是启动默认值，数据库里的选项值覆盖它。
+	common.OptionMap["RelayTimeout"] = strconv.Itoa(common.RelayTimeout)
+	common.OptionMap["RelayResponseHeaderTimeout"] = strconv.Itoa(common.RelayResponseHeaderTimeout)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
@@ -324,11 +367,28 @@ func SyncOptions(frequency int) {
 	}
 }
 
+// maxIntOrZero 把选项字符串解析为非负整数：负数与非法值一律按 0 处理。
+// 0 在并发上限（B10）与上游超时（B11）的语义里都表示「不限制」，
+// 运维台误填负数不会被解释成「立即拒绝」造成整站不可用。
+func maxIntOrZero(value string) int {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func validateOptionValue(key string, value string) error {
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
+		return err
+	}
+	if err := billing_setting.ValidateTaxOption(key, value); err != nil {
+		return err
+	}
+	if err := operation_setting.ValidateUsageAlertOption(key, value); err != nil {
 		return err
 	}
 	if err := operation_setting.ValidateEpaySignOption(key, value); err != nil {
@@ -602,6 +662,12 @@ func updateOptionMap(key string, value string) (err error) {
 			operation_setting.SelfUseModeEnabled = boolValue
 		case "ModelRequestRateLimitEnabled":
 			setting.ModelRequestRateLimitEnabled = boolValue
+		case "RelayConcurrencyLimitEnabled":
+			// v1.1.0 M2 · B10 并发闸门总开关
+			setting.RelayConcurrencyLimitEnabled = boolValue
+		case "AutoGroupUpgradeEnabled":
+			// v1.1.0 M2 · B57 累计充值自动升级分组总开关
+			setting.AutoGroupUpgradeEnabled = boolValue
 		case "SMTPSSLEnabled":
 			common.SMTPSSLEnabled = boolValue
 		case "SMTPStartTLSEnabled":
@@ -624,6 +690,8 @@ func updateOptionMap(key string, value string) (err error) {
 	switch key {
 	case "FreeQuotaAllowedGroups":
 		SetFreeQuotaAllowedGroups(value)
+	case "FreeQuotaAllowedModels":
+		SetFreeQuotaAllowedModels(value)
 	case "EmailDomainWhitelist":
 		common.EmailDomainWhitelist = strings.Split(value, ",")
 	case "SMTPServer":
@@ -783,8 +851,24 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.ModelRequestRateLimitSuccessCount, _ = strconv.Atoi(value)
 	case "ModelRequestRateLimitGroup":
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
+	case "AutoGroupUpgradeRules":
+		// v1.1.0 M2 · B57 规则 JSON；非法 JSON 会在 UpdateOption 处报错并保持旧规则
+		err = SetAutoGroupUpgradeRules(value)
 	case "RetryTimes":
 		common.RetryTimes, _ = strconv.Atoi(value)
+	case "RelayUserConcurrencyLimit":
+		// v1.1.0 M2 · B10 单用户并发上限，负数按 0（不限制）处理
+		setting.RelayUserConcurrencyLimit = maxIntOrZero(value)
+	case "RelayModelConcurrencyLimit":
+		// v1.1.0 M2 · B10 单模型并发上限
+		setting.RelayModelConcurrencyLimit = maxIntOrZero(value)
+	case "RelayTimeout":
+		// v1.1.0 M2 · B11 整请求超时（秒），0 表示不设上限（流式场景的旧行为）。
+		// 实际重建客户端在 controller.UpdateOption 里做，model 包不能反向依赖 service。
+		common.RelayTimeout = maxIntOrZero(value)
+	case "RelayResponseHeaderTimeout":
+		// v1.1.0 M2 · B11 等上游响应头的超时（秒），0 表示不限。
+		common.RelayResponseHeaderTimeout = maxIntOrZero(value)
 	case "ChannelLoadBalanceStrategy":
 		// === [负载均衡改造] 热更新渠道负载均衡策略 ===
 		SetLoadBalanceStrategy(value)
@@ -828,6 +912,121 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.VGuardStrongWords = value
 	case "VGuardWeakWords":
 		setting.VGuardWeakWords = value
+	// 安全基线（v1.1.0 M1）：跨域白名单、管理员 IP 白名单、CSP 模板。
+	// 三者都按请求读取，改完立即生效，无需重启。
+	case "CorsAllowOrigins":
+		common.CorsAllowOrigins = value
+	case "AdminIpWhitelist":
+		common.AdminIpWhitelist = value
+	case "APISignatureRequired":
+		common.APISignatureRequired, _ = strconv.ParseBool(value)
+	case "APISignatureWindowSeconds":
+		common.APISignatureWindowSeconds, _ = strconv.Atoi(value)
+		// 窗口钳制：太小会把时钟略有偏差的合法客户端全部拒掉，
+		// 太大则拉长 nonce 表与重放风险暴露面。
+		if common.APISignatureWindowSeconds < 30 {
+			common.APISignatureWindowSeconds = 30
+		}
+		if common.APISignatureWindowSeconds > 86400 {
+			common.APISignatureWindowSeconds = 86400
+		}
+	case "MetricsEnabled":
+		common.MetricsEnabled, _ = strconv.ParseBool(value)
+	case "MetricsToken":
+		common.MetricsToken = strings.TrimSpace(value)
+	case "ConsumeLogAsyncEnabled":
+		common.ConsumeLogAsyncEnabled, _ = strconv.ParseBool(value)
+	case "ConsumeLogQueueSize":
+		common.ConsumeLogQueueSize, _ = strconv.Atoi(value)
+		if common.ConsumeLogQueueSize < 16 {
+			common.ConsumeLogQueueSize = 16
+		}
+		if common.ConsumeLogQueueSize > 1<<20 {
+			common.ConsumeLogQueueSize = 1 << 20
+		}
+	case "ConsumeLogBatchSize":
+		common.ConsumeLogBatchSize, _ = strconv.Atoi(value)
+		if common.ConsumeLogBatchSize < 1 {
+			common.ConsumeLogBatchSize = 1
+		}
+		if common.ConsumeLogBatchSize > 1000 {
+			common.ConsumeLogBatchSize = 1000
+		}
+	case "ConsumeLogFlushIntervalMs":
+		common.ConsumeLogFlushIntervalMs, _ = strconv.Atoi(value)
+		if common.ConsumeLogFlushIntervalMs < 10 {
+			common.ConsumeLogFlushIntervalMs = 10
+		}
+		if common.ConsumeLogFlushIntervalMs > 60000 {
+			common.ConsumeLogFlushIntervalMs = 60000
+		}
+	case "BillingAlertEnabled":
+		common.BillingAlertEnabled, _ = strconv.ParseBool(value)
+	case "BillingAlertSingleRequestQuota":
+		common.BillingAlertSingleRequestQuota, _ = strconv.ParseFloat(value, 64)
+		if common.BillingAlertSingleRequestQuota < 0 {
+			common.BillingAlertSingleRequestQuota = 0
+		}
+	case "AlertNotifyMaxPerHour":
+		common.AlertNotifyMaxPerHour, _ = strconv.Atoi(value)
+		if common.AlertNotifyMaxPerHour < 1 {
+			common.AlertNotifyMaxPerHour = 1
+		}
+		if common.AlertNotifyMaxPerHour > 100 {
+			common.AlertNotifyMaxPerHour = 100
+		}
+	case "MonitorAlertEnabled":
+		common.MonitorAlertEnabled, _ = strconv.ParseBool(value)
+	case "MonitorAlertIntervalMinutes":
+		common.MonitorAlertIntervalMinutes, _ = strconv.Atoi(value)
+		if common.MonitorAlertIntervalMinutes < 1 {
+			common.MonitorAlertIntervalMinutes = 1
+		}
+		if common.MonitorAlertIntervalMinutes > 1440 {
+			common.MonitorAlertIntervalMinutes = 1440
+		}
+	case "MonitorChannelErrorRatePercent":
+		common.MonitorChannelErrorRatePercent, _ = strconv.Atoi(value)
+		if common.MonitorChannelErrorRatePercent < 1 {
+			common.MonitorChannelErrorRatePercent = 1
+		}
+		if common.MonitorChannelErrorRatePercent > 100 {
+			common.MonitorChannelErrorRatePercent = 100
+		}
+	case "MonitorChannelMinRequests":
+		common.MonitorChannelMinRequests, _ = strconv.Atoi(value)
+		if common.MonitorChannelMinRequests < 1 {
+			common.MonitorChannelMinRequests = 1
+		}
+	case "MonitorDiskUsedPercent":
+		common.MonitorDiskUsedPercent, _ = strconv.Atoi(value)
+		if common.MonitorDiskUsedPercent < 0 || common.MonitorDiskUsedPercent > 100 {
+			common.MonitorDiskUsedPercent = 90
+		}
+	case "MonitorMemoryUsedPercent":
+		common.MonitorMemoryUsedPercent, _ = strconv.Atoi(value)
+		if common.MonitorMemoryUsedPercent < 0 || common.MonitorMemoryUsedPercent > 100 {
+			common.MonitorMemoryUsedPercent = 90
+		}
+	case "UsageFallbackEnabled":
+		common.UsageFallbackEnabled, _ = strconv.ParseBool(value)
+	case "SecurityCSPDirective":
+		common.SecurityCSPDirective = value
+	case "PasswordMinLength":
+		parsed, _ := strconv.Atoi(value)
+		common.PasswordMinLength = common.NormalizePasswordMinLength(parsed)
+	case "PasswordRequireComplex":
+		common.PasswordRequireComplex, _ = strconv.ParseBool(value)
+	case "LoginFailureLockThreshold":
+		common.LoginFailureLockThreshold, _ = strconv.Atoi(value)
+		if common.LoginFailureLockThreshold < 0 {
+			common.LoginFailureLockThreshold = 0
+		}
+	case "LoginFailureLockMinutes":
+		common.LoginFailureLockMinutes, _ = strconv.Atoi(value)
+		if common.LoginFailureLockMinutes < 0 {
+			common.LoginFailureLockMinutes = 0
+		}
 	case "VGuardWeakThreshold":
 		setting.VGuardWeakThreshold, _ = strconv.Atoi(value)
 	case "VGuardWindowMinutes":

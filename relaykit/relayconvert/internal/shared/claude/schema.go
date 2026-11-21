@@ -40,4 +40,5 @@ func FunctionParametersToInputSchema(parameters json.RawMessage) (schema json.Ra
 			return empty, false
 		}
 	}
-	return schema, true}
+	return schema, true
+}

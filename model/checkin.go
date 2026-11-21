@@ -99,12 +99,10 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 			return common.NewMessage("Check-in failed, please try again later")
 		}
 
-		// 步骤2: 在事务中增加用户额度（同时记入免费额度，优先于付费余额被消费）
-		if err := tx.Model(&User{}).Where("id = ?", userId).
-			Updates(map[string]any{
-				"quota":      gorm.Expr("quota + ?", quotaAwarded),
-				"free_quota": gorm.Expr("free_quota + ?", quotaAwarded),
-			}).Error; err != nil {
+		// 步骤2: 在事务中把奖励记进免费额度。
+		// quota 与 free_quota 同步 +奖励，付费余额（quota - free_quota）保持不变 ——
+		// 签到只送「免费额度」，不该让充值来的付费余额凭空变多。
+		if err := increaseUserFreeQuotaTx(tx, userId, quotaAwarded); err != nil {
 			return common.NewMessage("Check-in failed: quota update error")
 		}
 

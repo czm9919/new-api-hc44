@@ -31,6 +31,8 @@ const (
 	KeyPoolChannelTagPrefix = "keypool-"
 	// FreeQuotaAllowedGroupsOptionKey 免费额度可用分组白名单（全局计费策略）。
 	FreeQuotaAllowedGroupsOptionKey = "FreeQuotaAllowedGroups"
+	// FreeQuotaAllowedModelsOptionKey 免费额度可用模型白名单（hc31 · B89，支持 prefix* 通配）。
+	FreeQuotaAllowedModelsOptionKey = "FreeQuotaAllowedModels"
 	// ModelAutoCheckEnabledOptionKey 单模型自动检查+自动下架开关（monitor_setting 配置节）。
 	ModelAutoCheckEnabledOptionKey = "monitor_setting.model_auto_check_enabled"
 )
@@ -51,6 +53,9 @@ type KeyPoolSettings struct {
 	// FreeQuotaAllowedGroups 免费额度（签到奖励）可用分组白名单，逗号分隔；
 	// 空表示不限制（所有分组都优先消耗免费额度）。白名单外的分组只扣付费余额。
 	FreeQuotaAllowedGroups string `json:"free_quota_allowed_groups"`
+	// FreeQuotaAllowedModels 免费额度可用模型白名单，逗号分隔，支持 prefix* 通配
+	// （如 "gpt-3*,gemini-*"）；空表示不限制。命中模型白名单之外时只扣付费余额。
+	FreeQuotaAllowedModels string `json:"free_quota_allowed_models"`
 	// ModelAutoCheckEnabled 巡检改为逐模型探测：坏模型自动下架、恢复自动上架。
 	// 依赖「自动测试渠道」定时任务（AutoTestChannelEnabled）才会周期执行。
 	ModelAutoCheckEnabled bool `json:"model_auto_check_enabled"`
@@ -78,6 +83,9 @@ func GetKeyPoolSettings() KeyPoolSettings {
 	if v, err := model.GetOptionValue(FreeQuotaAllowedGroupsOptionKey); err == nil {
 		s.FreeQuotaAllowedGroups = v
 	}
+	if v, err := model.GetOptionValue(FreeQuotaAllowedModelsOptionKey); err == nil {
+		s.FreeQuotaAllowedModels = v
+	}
 	s.ModelAutoCheckEnabled = operation_setting.GetMonitorSetting().ModelAutoCheckEnabled
 	return s
 }
@@ -93,12 +101,15 @@ func UpdateKeyPoolSettings(s KeyPoolSettings) error {
 	// 白名单逐项去空白，非法形态（全逗号等）直接归空表示不限制。
 	groups := model.ParseFreeQuotaAllowedGroups(s.FreeQuotaAllowedGroups)
 	allowedRaw := strings.Join(groups, ",")
+	models := model.ParseFreeQuotaAllowedModels(s.FreeQuotaAllowedModels)
+	allowedModelsRaw := strings.Join(models, ",")
 	return model.UpdateOptionsBulk(map[string]string{
 		KeyPoolDefaultDailyGiftQuotaOptionKey:  strconv.Itoa(s.DefaultDailyGiftQuota),
 		KeyPoolUserMaxTokensPerSubmitOptionKey: strconv.Itoa(s.UserMaxTokensPerSubmit),
 		KeyPoolAllowUserContributeOptionKey:    strconv.FormatBool(s.AllowUserContribute),
 		KeyPoolAutoBindModelsOptionKey:         strconv.FormatBool(s.AutoBindModels),
 		FreeQuotaAllowedGroupsOptionKey:        allowedRaw,
+		FreeQuotaAllowedModelsOptionKey:        allowedModelsRaw,
 		ModelAutoCheckEnabledOptionKey:         strconv.FormatBool(s.ModelAutoCheckEnabled),
 	})
 }

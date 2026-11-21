@@ -81,3 +81,99 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
+
+// BatchGrantUserQuota 按用户 ID 批量发放额度（v1.1.0 M2 · B58）。
+//
+// 场景：活动补偿、故障赔付、给一批内测用户发额度。逐个走 AdjustUserQuota，
+// 复用单用户的权限校验（不能调同级/上级）与额度上限校验；单个用户失败不
+// 影响其余用户，最终返回逐人明细让运营知道谁没发上。
+const batchGrantQuotaMaxUsers = 200
+
+type BatchGrantQuotaRequest struct {
+	UserIds []int  `json:"user_ids"`
+	Quota   int    `json:"quota"`
+	Note    string `json:"note"`
+}
+
+func BatchGrantUserQuota(c *gin.Context) {
+	var req BatchGrantQuotaRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if len(req.UserIds) == 0 || len(req.UserIds) > batchGrantQuotaMaxUsers {
+		common.ApiErrorT(c, "Invalid user count")
+		return
+	}
+	if req.Quota <= 0 {
+		common.ApiErrorT(c, "Quota change amount cannot be zero")
+		return
+	}
+	// 去重，防止同一用户在一次请求里被发两份。
+	seen := make(map[int]struct{}, len(req.UserIds))
+	ids := make([]int, 0, len(req.UserIds))
+	for _, id := range req.UserIds {
+		if id > 0 {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	operatorId := c.GetInt("id")
+	operatorRole := c.GetInt("role")
+	granted := make([]int, 0, len(ids))
+	failed := make([]gin.H, 0)
+	for _, id := range ids {
+		adjustment, err := model.AdjustUserQuota(id, operatorRole, "add", req.Quota)
+		if err != nil {
+			reason := "database_error"
+			switch {
+			case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
+				reason = "invalid_parameters"
+			case errors.Is(err, model.ErrUserQuotaPermission):
+				reason = "permission_denied"
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				reason = "target_not_found"
+			case errors.Is(err, model.ErrWalletQuotaLimitExceeded):
+				reason = "quota_limit_exceeded"
+			}
+			failed = append(failed, gin.H{"user_id": id, "reason": reason})
+			continue
+		}
+		granted = append(granted, id)
+		operation := model.AuditOperation{Action: "user.quota_add", Params: model.AuditFields{
+			"target_user_id": adjustment.UserID,
+			"quota":          req.Quota,
+			"mode":           "add",
+			"batch":          true,
+			"note":           req.Note,
+		}}
+		model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
+			auditContentEN("user.quota_add", operation.Params), auditOperatorInfo(c), &operation, c)
+	}
+
+	model.RecordOperationAuditLog(operatorId, operatorRole,
+		auditContentEN("user.quota_batch_add", model.AuditFields{
+			"requested": len(req.UserIds),
+			"granted":   len(granted),
+			"failed":    len(failed),
+			"quota":     req.Quota,
+			"note":      req.Note,
+		}),
+		c.ClientIP(), "user.quota_batch_add",
+		model.AuditFields{"requested": len(req.UserIds), "granted": len(granted), "failed": len(failed), "quota": req.Quota},
+		auditOperatorInfo(c), &model.AuditRequestInfo{
+			Method: c.Request.Method, Route: c.FullPath(), Status: c.Writer.Status(), Success: len(failed) == 0,
+		}, c)
+	markAuditLogged(c)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"granted": granted,
+			"failed":  failed,
+		},
+	})
+}

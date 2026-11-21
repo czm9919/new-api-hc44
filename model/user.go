@@ -78,20 +78,25 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id                   int                        `json:"id"`
-	Username             string                     `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password             string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
-	HasPassword          bool                       `json:"-" gorm:"-:all"`
-	OriginalPassword     string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName          string                     `json:"display_name" gorm:"index" validate:"max=20"`
-	Role                 int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status               int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email                string                     `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId            string                     `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId               string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId             string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId           string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
+	Id               int    `json:"id"`
+	Username         string `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password         string `json:"password" gorm:"not null;" validate:"min=8,max=128"`
+	HasPassword      bool   `json:"-" gorm:"-:all"`
+	OriginalPassword string `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName      string `json:"display_name" gorm:"index" validate:"max=20"`
+	Role             int    `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status           int    `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email            string `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId         string `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId        string `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId           string `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId         string `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId       string `json:"telegram_id" gorm:"column:telegram_id;index"`
+	// QQ 号（v1.1.0 M2）：由配套 AstrBot 机器人用一次性绑定码写入，
+	// 是抽奖与免费模型的门禁凭据；空串表示未绑定。
+	// default:'' 只对新库/新行生效，历史行的 NULL 由 EnsureUserQQBackfilled 补平。
+	QQ                   string                     `json:"qq" gorm:"column:qq;index;default:''"`
+	QQBoundAt            int64                      `json:"qq_bound_at" gorm:"column:qq_bound_at;default:0"`
 	VerificationCode     string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken          *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // Deprecated: 旧版面板访问令牌，仅在升级后的过渡期内使用；删除 users.access_token 列时一并移除。
 	AccessTokenCreatedAt *int64                     `json:"-" gorm:"type:bigint;column:access_token_created_at"`    // Deprecated: 旧版面板访问令牌，仅在升级后的过渡期内使用；删除 users.access_token 列时一并移除。
@@ -1435,6 +1440,69 @@ func IsFreeQuotaAllowedGroup(group string) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// 免费额度可用模型限制（hc31 · B89）
+//
+// FreeQuotaAllowedModels 与 FreeQuotaAllowedGroups 同一套语义：
+// 逗号分隔、支持 prefix* 通配（如 "gpt-3*,gemini-*"）；空串表示不限制。
+// 分组与模型两个白名单都放行时才允许消耗免费额度，否则只扣付费余额
+// （quota - free_quota），与 FreeQuotaAllowedGroups 走同一条消费判定路径。
+// ---------------------------------------------------------------------------
+
+var freeQuotaAllowedModelsValue atomic.Value // 存 string
+
+// SetFreeQuotaAllowedModels 更新免费额度可用模型白名单（由选项系统在加载/更新时调用）。
+func SetFreeQuotaAllowedModels(v string) {
+	freeQuotaAllowedModelsValue.Store(strings.TrimSpace(v))
+}
+
+// GetFreeQuotaAllowedModels 返回模型白名单原始配置（逗号分隔，支持 prefix*，空串表示不限制）。
+func GetFreeQuotaAllowedModels() string {
+	if v, ok := freeQuotaAllowedModelsValue.Load().(string); ok {
+		return v
+	}
+	return ""
+}
+
+// ParseFreeQuotaAllowedModels 把逗号分隔的模型白名单解析为去空白的条目列表（保留通配符）。
+func ParseFreeQuotaAllowedModels(raw string) []string {
+	models := make([]string, 0, 4)
+	for _, m := range strings.Split(raw, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			models = append(models, m)
+		}
+	}
+	return models
+}
+
+// IsFreeQuotaAllowedModel 该模型是否允许消耗免费额度（白名单为空时全部允许）。
+// 支持 prefix* 通配："gpt-3*" 匹配 "gpt-3.5-turbo"、"gpt-3-xxx"；"*" 单独一项匹配全部。
+func IsFreeQuotaAllowedModel(modelName string) bool {
+	raw := GetFreeQuotaAllowedModels()
+	if raw == "" {
+		return true
+	}
+	for _, m := range ParseFreeQuotaAllowedModels(raw) {
+		if strings.HasSuffix(m, "*") {
+			if strings.HasPrefix(modelName, strings.TrimSuffix(m, "*")) {
+				return true
+			}
+			continue
+		}
+		if m == modelName {
+			return true
+		}
+	}
+	return false
+}
+
+// FreeQuotaUsable 本次计费（分组 + 模型）是否允许消耗免费额度。
+// 分组白名单（FreeQuotaAllowedGroups）与模型白名单（FreeQuotaAllowedModels）
+// 必须同时放行；任一白名单为空表示该维度不限制。
+func FreeQuotaUsable(group, modelName string) bool {
+	return IsFreeQuotaAllowedGroup(group) && IsFreeQuotaAllowedModel(modelName)
+}
+
 // GetUserFreeQuota 返回用户免费额度（限制分组时用于计算付费可用余额）。
 func GetUserFreeQuota(id int) (int, error) {
 	var free int64
@@ -1444,7 +1512,8 @@ func GetUserFreeQuota(id int) (int, error) {
 
 // IncreaseUserFreeQuota 增加用户免费额度（签到等赠送专用）。
 // 免费额度是 quota 工作余额中的「免费部分」，因此同时抬升 quota 与 free_quota，
-// 维持 free_quota <= quota 的不变量；缓存侧只追踪工作余额 quota。
+// 维持 free_quota <= quota 的不变量；付费余额 quota - free_quota 不变。
+// 缓存侧只追踪工作余额 quota。
 func IncreaseUserFreeQuota(id int, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
@@ -1452,7 +1521,27 @@ func IncreaseUserFreeQuota(id int, quota int) (err error) {
 	if err := common.ValidateWalletQuota(quota); err != nil {
 		return err
 	}
-	result := DB.Model(&User{}).
+	if err := increaseUserFreeQuotaTx(DB, id, quota); err != nil {
+		return err
+	}
+	gopool.Go(func() {
+		if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
+			common.SysLog(common.LogText("failed to increase user free quota: %s", err.Error()))
+		}
+	})
+	return nil
+}
+
+// increaseUserFreeQuotaTx 在给定连接（或事务）上把奖励记进免费额度。
+//
+// 只加 free_quota 而不动 quota 会破坏「free_quota 是 quota 的一部分」这个不变量
+// （付费余额会变成负数、扣费时重复扣减），所以两个字段必须同步抬升；反过来说
+// 付费余额 quota - free_quota 在签到前后完全一致 —— 签到只送免费额度。
+//
+// 单独抽出来是为了让签到的事务路径（MySQL / PostgreSQL）和直写路径（SQLite）
+// 走同一段 SQL 与同一个钱包上限守卫，避免两条路径的语义漂移。
+func increaseUserFreeQuotaTx(db *gorm.DB, id int, quota int) error {
+	result := db.Model(&User{}).
 		Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
 		Updates(map[string]any{
 			"quota":      gorm.Expr("quota + ?", quota),
@@ -1462,15 +1551,10 @@ func IncreaseUserFreeQuota(id int, quota int) (err error) {
 		return result.Error
 	}
 	if result.RowsAffected == 1 {
-		gopool.Go(func() {
-			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-				common.SysLog(common.LogText("failed to increase user free quota: %s", err.Error()))
-			}
-		})
 		return nil
 	}
 	var count int64
-	if err := DB.Model(&User{}).Where("id = ?", id).Count(&count).Error; err != nil {
+	if err := db.Model(&User{}).Where("id = ?", id).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {

@@ -28,7 +28,7 @@ import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
 import { getRoleLabel } from '@/lib/roles'
 
-import { getDisplayName } from '../lib'
+import { getDisplayName, splitProfileQuota } from '../lib'
 import type { UserProfile } from '../types'
 
 // ============================================================================
@@ -84,6 +84,10 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
   const avatarFallback = getUserAvatarFallback(avatarName)
   const avatarFallbackStyle = getUserAvatarStyle(avatarName)
   const roleLabel = getRoleLabel(profile.role)
+  // 钱包拆分与钱包页 / 用户管理列表保持一致：付费余额 = quota - free_quota。
+  // quota 是「总额（含免费）」，直接当余额展示会让签到后的两张卡同时上涨，
+  // 看起来像奖励发了两次。
+  const quotaSplit = splitProfileQuota(profile.quota, profile.free_quota)
   const stats: {
     label: string
     value: string
@@ -92,9 +96,9 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
     tone: IconBadgeTone
   }[] = [
     {
-      label: t('Current Balance'),
-      value: formatQuota(profile.quota),
-      description: t('Remaining quota'),
+      label: t('Paid balance'),
+      value: formatQuota(quotaSplit.paid),
+      description: `${t('Available Balance')} ${formatQuota(quotaSplit.total)}`,
       icon: WalletCards,
       tone: 'success',
     },
@@ -114,7 +118,7 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
     },
     {
       label: t('Free quota'),
-      value: formatQuota(profile.free_quota ?? 0),
+      value: formatQuota(quotaSplit.free),
       description: t('From check-ins, used first'),
       icon: Gift,
       tone: 'warning',

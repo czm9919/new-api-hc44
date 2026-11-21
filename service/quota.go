@@ -296,6 +296,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if usage == nil {
 		usage = &dto.Usage{PromptTokens: relayInfo.GetEstimatePromptTokens(), TotalTokens: relayInfo.GetEstimatePromptTokens()}
 	}
+	// 上游 usage 兜底估算（v1.1.0 M1 · B82）：与文本路径同构。
+	usage, usageFallbackApplied := applyUsageFallback(relayInfo, effectiveBillingUsage(usage))
+	if usageFallbackApplied {
+		extraContent = append(extraContent, common.NewMessage("Upstream returned no token counts, billed an estimated prompt token count"))
+	}
 
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
@@ -377,6 +382,21 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
+	// 计费异常告警（v1.1.0 M1 · B71）：与文本路径同构。
+	checkBillingAnomalies(ctx, billingAnomalyInput{
+		UserId:            relayInfo.UserId,
+		ChannelId:         relayInfo.ChannelId,
+		TokenId:           relayInfo.TokenId,
+		ModelName:         billingModelName,
+		Quota:             quota,
+		PreConsumedQuota:  relayInfo.FinalPreConsumedQuota,
+		Billable:          totalTokens != 0 || fixedPriceBilling,
+		UsePrice:          usePrice,
+		FixedPriceBilling: fixedPriceBilling,
+		ModelRatio:        modelRatio,
+		GroupRatio:        groupRatio,
+	})
+
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, common.LogText("error settling billing: %s", err.Error()))
 	}
@@ -386,6 +406,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	logContent = appendFundingSource(relayInfo, logContent)
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	if usageFallbackApplied {
+		reportUsageFallback(ctx, other, usage.PromptTokens)
+	}
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
@@ -409,8 +432,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 // appendFundingSource 在消费明细里标注本次扣费的资金来源（hc20 免费/付费余额隔离）：
 //   - 订阅计费：订阅额度；
-//   - 免费分组白名单内：免费余额优先，不足部分扣付费余额；
-//   - 白名单外（付费分组）：付费余额。
+//   - 免费分组白名单内且模型也在白名单内：免费余额优先，不足部分扣付费余额；
+//   - 白名单外（付费分组或模型受限）：付费余额。
 func appendFundingSource(relayInfo *relaycommon.RelayInfo, logContent []*common.Message) []*common.Message {
 	if relayInfo == nil {
 		return logContent
@@ -418,10 +441,21 @@ func appendFundingSource(relayInfo *relaycommon.RelayInfo, logContent []*common.
 	if relayInfo.BillingSource == BillingSourceSubscription {
 		return append(logContent, common.NewMessage("资金来源: 订阅额度"))
 	}
-	if model.IsFreeQuotaAllowedGroup(relayInfo.UsingGroup) {
+	if relayFreeQuotaUsable(relayInfo) {
 		return append(logContent, common.NewMessage("资金来源: 免费余额优先，不足部分扣付费余额"))
 	}
 	return append(logContent, common.NewMessage("资金来源: 付费余额"))
+}
+
+// relayFreeQuotaUsable 判定本次计费是否允许消耗免费额度（hc31 · B89）：
+// 分组白名单（FreeQuotaAllowedGroups）与模型白名单（FreeQuotaAllowedModels）
+// 需同时放行；模型以计费身份（BillingModelName，缺省回落 OriginModelName）为准，
+// 保证虚拟定价别名下判定与实际扣费一致。
+func relayFreeQuotaUsable(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return false
+	}
+	return model.FreeQuotaUsable(relayInfo.UsingGroup, relayInfo.GetBillingModelName())
 }
 
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
@@ -473,7 +507,7 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 	} else {
 		// Wallet
 		if quota > 0 {
-			if model.IsFreeQuotaAllowedGroup(relayInfo.UsingGroup) {
+			if relayFreeQuotaUsable(relayInfo) {
 				err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
 			} else {
 				err = model.DecreaseUserQuotaPaidOnly(relayInfo.UserId, quota, false)

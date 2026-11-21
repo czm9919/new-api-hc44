@@ -400,8 +400,13 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []*common.Message) {
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
+	// 上游 usage 兜底估算（v1.1.0 M1 · B82）：usage 明确返回但 token 全零时
+	// 按预估算的 prompt tokens 计费，避免整单被抹零。
+	billingUsage, usageFallbackApplied := applyUsageFallback(relayInfo, billingUsage)
 	if usage == nil {
 		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage"))
+	} else if usageFallbackApplied {
+		extraContent = append(extraContent, common.NewMessage("Upstream returned no token counts, billed an estimated prompt token count"))
 	}
 	if originUsage != nil {
 		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, billingUsage, relayInfo.GetFinalRequestRelayFormat())
@@ -463,6 +468,21 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}
 
+	// 计费异常告警（v1.1.0 M1 · B71）：零扣费、零倍率、负数、超阈值当场暴露。
+	checkBillingAnomalies(ctx, billingAnomalyInput{
+		UserId:            relayInfo.UserId,
+		ChannelId:         relayInfo.ChannelId,
+		TokenId:           relayInfo.TokenId,
+		ModelName:         summary.ModelName,
+		Quota:             summary.Quota,
+		PreConsumedQuota:  relayInfo.FinalPreConsumedQuota,
+		Billable:          summary.hasBillableUsage(),
+		UsePrice:          relayInfo.PriceData.UsePrice,
+		FixedPriceBilling: summary.FixedPriceBilling,
+		ModelRatio:        summary.ModelRatio,
+		GroupRatio:        summary.GroupRatio,
+	})
+
 	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
 		logger.LogError(ctx, common.LogText("error settling billing: %s", err.Error()))
 	}
@@ -491,6 +511,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
+	if usageFallbackApplied {
+		reportUsageFallback(ctx, other, summary.PromptTokens)
+	}
 	if adminRejectReason != "" {
 		other.SetAdmin("reject_reason", adminRejectReason)
 	}

@@ -795,9 +795,21 @@ func GenerateKeyPool(req KeyPoolRequest) (*KeyPoolResult, error) {
 		needsUpdate = true
 	}
 	if needsUpdate {
-		if err := poolCh.Update(); err != nil {
-			return nil, err
+		// 上游 rc.51 起 Channel.Update 不再写 key（key 的变更只能走
+		// UpdateChannelLocked），号池合并 key 必须走带锁更新，否则新 key 只改了
+		// 内存对象，库里仍是旧 key 串（multi_key_size 也会被算成 0）。
+		stored, uerr := model.UpdateChannelLocked(poolCh.Id, func(ch *model.Channel) error {
+			ch.Key = merged
+			ensurePoolChannelMultiKey(ch)
+			if ch.ChannelInfo.IsMultiKey {
+				ch.ChannelInfo.MultiKeySize = countChannelKeys(merged)
+			}
+			return nil
+		})
+		if uerr != nil {
+			return nil, uerr
 		}
+		poolCh = stored
 	}
 	model.InitChannelCache()
 	if created {

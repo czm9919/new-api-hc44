@@ -43,6 +43,21 @@ const (
 	modelsDevHost               = "models.dev"
 	modelsDevPath               = "/api.json"
 	modelsDevInputCostRatioBase = 1000.0
+
+	// LiteLLM 价表：覆盖面最广的厂商价清单，补 models.dev 没上架的托管模型。
+	litellmPresetID      = -102
+	litellmPresetName    = "LiteLLM 价格预设"
+	litellmPresetBaseURL = "https://raw.githubusercontent.com"
+	litellmPresetHost    = "raw.githubusercontent.com"
+	litellmPresetPath    = "/BerriAI/litellm/main/model_prices_and_context_window.json"
+
+	// 合并预设：把快照里的 basellm + models.dev + LiteLLM 三源合成一份，
+	// 并且按「本站自己的模型名」出键，所以点一次就能覆盖尽可能多的模型。
+	officialMergedPresetID = -103
+	// 名字以 officialRatioPresetName 开头：前端 findOfficialSource 按前缀认源。
+	officialMergedPresetName     = "官方倍率预设 · 合并官方价"
+	officialMergedPresetBaseURL  = "https://official.pricing.local"
+	officialMergedPresetEndpoint = "official-merged"
 )
 
 func nearlyEqual(a, b float64) bool {
@@ -224,9 +239,22 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 
 	var upstreams []dto.UpstreamDTO
+	// 合并预设不走 HTTP：直接读官方价快照，按本站模型名铺开。
+	var mergedResult *upstreamResult
 
 	if len(req.Upstreams) > 0 {
 		for _, u := range req.Upstreams {
+			if u.ID == officialMergedPresetID {
+				name := fmt.Sprintf("%s(%d)", officialMergedPresetName, officialMergedPresetID)
+				data, summary, err := buildMergedOfficialRatioData(c.Request.Context())
+				if err != nil {
+					mergedResult = &upstreamResult{Name: name, Err: err.Error()}
+				} else {
+					logger.LogInfo(c.Request.Context(), common.LogText("official merged preset: %s", summary))
+					mergedResult = &upstreamResult{Name: name, Data: data}
+				}
+				continue
+			}
 			if strings.HasPrefix(u.BaseURL, "http") {
 				if u.Endpoint == "" {
 					u.Endpoint = defaultEndpoint
@@ -258,13 +286,16 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}
 	}
 
-	if len(upstreams) == 0 {
+	if len(upstreams) == 0 && mergedResult == nil {
 		common.ApiErrorT(c, "No valid upstream channel")
 		return
 	}
 
 	var wg sync.WaitGroup
-	ch := make(chan upstreamResult, len(upstreams))
+	ch := make(chan upstreamResult, len(upstreams)+1)
+	if mergedResult != nil {
+		ch <- *mergedResult
+	}
 
 	sem := make(chan struct{}, maxConcurrentFetches)
 
@@ -314,6 +345,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				fullURL = chItem.BaseURL + endpoint
 			}
 			isModelsDev := isModelsDevAPIEndpoint(fullURL)
+			isLiteLLM := isLiteLLMAPIEndpoint(fullURL)
 
 			uniqueName := chItem.Name
 			if chItem.ID != 0 {
@@ -403,6 +435,18 @@ func FetchUpstreamRatios(c *gin.Context) {
 				converted, err := convertModelsDevToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
 					logger.LogWarn(c.Request.Context(), common.LogText("models.dev parse failed from %s: %s", chItem.Name, err.Error()))
+					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+					return
+				}
+				ch <- upstreamResult{Name: uniqueName, Data: converted}
+				return
+			}
+
+			// type5: LiteLLM model_prices_and_context_window.json -> per-token USD to ratios
+			if isLiteLLM {
+				converted, err := convertLiteLLMToRatioData(bytes.NewReader(bodyBytes))
+				if err != nil {
+					logger.LogWarn(c.Request.Context(), common.LogText("litellm parse failed from %s: %s", chItem.Name, err.Error()))
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
@@ -1128,6 +1172,139 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	return converted, nil
 }
 
+func isLiteLLMAPIEndpoint(rawURL string) bool {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if strings.ToLower(parsedURL.Hostname()) != litellmPresetHost {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsedURL.Path), "/model_prices_and_context_window.json") ||
+		strings.HasSuffix(strings.ToLower(parsedURL.Path), "/model_prices_and_context_window_backup.json")
+}
+
+// convertLiteLLMToRatioData 解析 LiteLLM 价表并转成本站倍率。
+// 表里单价是「美元 / token」，本站口径：model_ratio = $/1M / 2（ratio_setting.USD = 500）。
+// 只收正输入价的条目；输入价为零的占位条目跳过，避免把模型定价成免费。
+func convertLiteLLMToRatioData(reader io.Reader) (map[string]any, error) {
+	var payload map[string]struct {
+		InputCostPerToken  *float64 `json:"input_cost_per_token"`
+		OutputCostPerToken *float64 `json:"output_cost_per_token"`
+		CacheReadInputCost *float64 `json:"cache_read_input_token_cost"`
+	}
+	if err := common.DecodeJson(reader, &payload); err != nil {
+		return nil, fmt.Errorf("failed to decode litellm response: %w", err)
+	}
+	modelRatioMap := make(map[string]any)
+	completionRatioMap := make(map[string]any)
+	cacheRatioMap := make(map[string]any)
+	for name, entry := range payload {
+		if entry.InputCostPerToken == nil || !(*entry.InputCostPerToken > 0) {
+			continue
+		}
+		inputPerMillion := *entry.InputCostPerToken * 1e6
+		modelRatioMap[name] = roundRatioValue(inputPerMillion * float64(ratio_setting.USD) / modelsDevInputCostRatioBase)
+		if entry.OutputCostPerToken != nil && *entry.OutputCostPerToken > 0 {
+			completionRatioMap[name] = roundRatioValue(*entry.OutputCostPerToken / *entry.InputCostPerToken)
+		}
+		if entry.CacheReadInputCost != nil && *entry.CacheReadInputCost > 0 {
+			cacheRatioMap[name] = roundRatioValue(*entry.CacheReadInputCost / *entry.InputCostPerToken)
+		}
+	}
+	if len(modelRatioMap) == 0 {
+		return nil, fmt.Errorf("no usable pricing entries found in litellm response")
+	}
+	converted := map[string]any{"model_ratio": modelRatioMap}
+	if len(completionRatioMap) > 0 {
+		converted["completion_ratio"] = completionRatioMap
+	}
+	if len(cacheRatioMap) > 0 {
+		converted["cache_ratio"] = cacheRatioMap
+	}
+	return converted, nil
+}
+
+// siteModelNames 汇总所有渠道里配置的模型名（去重保序）。
+// 合并预设按这些名字出键，前端才能和本站模型行一一对上。
+func siteModelNames() ([]string, error) {
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, 256)
+	names := make([]string, 0, 256)
+	for _, channel := range channels {
+		for _, raw := range strings.Split(channel.Models, ",") {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// buildMergedOfficialRatioData 把官方价快照按「本站模型名」铺开成倍率数据。
+//
+// 这是「一键同步官方价」的取数口径：
+//   - 价格只来自官方/厂商价表（basellm 表达式表、models.dev、LiteLLM），不做任何估算；
+//   - 匹配按 精确 → 去厂商前缀 → 去版本/量化尾巴 三级降级；
+//   - 对不上的模型直接不出现在结果里，绝不会给它编一个价。
+func buildMergedOfficialRatioData(ctx context.Context) (map[string]any, string, error) {
+	snapshot, ok := loadOfficialPricingSnapshot()
+	if !ok || len(snapshot.Models) == 0 {
+		if _, err := refreshOfficialPricing(ctx, true); err != nil {
+			return nil, "", err
+		}
+		snapshot, ok = loadOfficialPricingSnapshot()
+		if !ok || len(snapshot.Models) == 0 {
+			return nil, "", fmt.Errorf("official pricing snapshot is empty")
+		}
+	}
+
+	names, err := siteModelNames()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to load site models: %w", err)
+	}
+
+	index := officialPriceIndexFor(snapshot)
+	modelRatioMap := make(map[string]any, len(names))
+	completionRatioMap := make(map[string]any, len(names))
+	cacheRatioMap := make(map[string]any, len(names))
+	for _, name := range names {
+		price, found := index.lookupLoose(name)
+		if !found || price.InputPrice <= 0 {
+			continue
+		}
+		modelRatioMap[name] = roundRatioValue(price.InputPrice * float64(ratio_setting.USD) / modelsDevInputCostRatioBase)
+		if price.OutputPrice > 0 {
+			completionRatioMap[name] = roundRatioValue(price.OutputPrice / price.InputPrice)
+		}
+		if price.CachePrice > 0 {
+			cacheRatioMap[name] = roundRatioValue(price.CachePrice / price.InputPrice)
+		}
+	}
+
+	converted := make(map[string]any)
+	if len(modelRatioMap) > 0 {
+		converted["model_ratio"] = modelRatioMap
+	}
+	if len(completionRatioMap) > 0 {
+		converted["completion_ratio"] = completionRatioMap
+	}
+	if len(cacheRatioMap) > 0 {
+		converted["cache_ratio"] = cacheRatioMap
+	}
+	summary := fmt.Sprintf("%d/%d models matched official prices", len(modelRatioMap), len(names))
+	return converted, summary, nil
+}
+
 func GetSyncableChannels(c *gin.Context) {
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
@@ -1162,6 +1339,20 @@ func GetSyncableChannels(c *gin.Context) {
 		ID:      modelsDevPresetID,
 		Name:    modelsDevPresetName,
 		BaseURL: modelsDevPresetBaseURL,
+		Status:  1,
+	})
+
+	syncableChannels = append(syncableChannels, dto.SyncableChannel{
+		ID:      litellmPresetID,
+		Name:    litellmPresetName,
+		BaseURL: litellmPresetBaseURL,
+		Status:  1,
+	})
+
+	syncableChannels = append(syncableChannels, dto.SyncableChannel{
+		ID:      officialMergedPresetID,
+		Name:    officialMergedPresetName,
+		BaseURL: officialMergedPresetBaseURL,
 		Status:  1,
 	})
 

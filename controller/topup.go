@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -603,5 +604,38 @@ func AdminCompleteTopUp(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	common.ApiSuccess(c, nil)
+}
+
+const topUpRemarkMaxLength = 255
+
+type AdminUpdateTopUpRemarkRequest struct {
+	Id     int    `json:"id"`
+	Remark string `json:"remark"`
+}
+
+// AdminUpdateTopUpRemark 管理员给订单留一句交接说明（v1.1.0 M2 · B59）。
+//
+// 场景：客服处理完一笔「付了但没到账」的订单后，下一班运营要知道发生了什么。
+// 备注写进订单本身而不是聊天记录，排查时不用翻群。修改留审计。
+func AdminUpdateTopUpRemark(c *gin.Context) {
+	var req AdminUpdateTopUpRemarkRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Id <= 0 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	remark := strings.TrimSpace(req.Remark)
+	if len(remark) > topUpRemarkMaxLength {
+		common.ApiErrorT(c, "Remark too long")
+		return
+	}
+	if err := model.UpdateTopUpRemark(req.Id, remark); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAuditFor(c, 0, "topup.remark", map[string]any{
+		"topup_id": req.Id,
+		"remark":   remark,
+	})
 	common.ApiSuccess(c, nil)
 }

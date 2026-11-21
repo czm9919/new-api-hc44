@@ -432,6 +432,12 @@ func UpdateOption(c *gin.Context) {
 		}
 		return
 	}
+	// v1.1.0 M2 · B11 上游超时热更新：relay 客户端按 proxy/policy 缓存复用，
+	// 超时是构造时烘进 client 的，改完全局变量必须重建客户端才生效。
+	// 放在 controller 而不是 model 里，是因为 model 不能反向依赖 service（循环依赖）。
+	if option.Key == "RelayTimeout" || option.Key == "RelayResponseHeaderTimeout" {
+		service.ReloadRelayHTTPClient()
+	}
 	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
 	recordManageAudit(c, "option.update", map[string]any{
 		"key": option.Key,

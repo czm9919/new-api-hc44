@@ -90,6 +90,9 @@ func SetRelayRouter(router *gin.Engine) {
 		//http router
 		httpRouter := relayV1Router.Group("")
 		httpRouter.Use(middleware.Distribute())
+		// v1.1.0 M2 · B10 单用户/单模型并发闸门。必须排在 Distribute 之后：
+		// 模型名由 distributor 解析请求体后写入 original_model，闸门依赖它。
+		httpRouter.Use(middleware.RelayConcurrencyLimit())
 
 		// claude related routes
 		// TODO: /messages/count_tokens is disabled. The current controller.CountClaudeTokens
@@ -216,6 +219,8 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.TokenAuth())
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
 	relayGeminiRouter.Use(middleware.Distribute())
+	// v1.1.0 M2 · B10 同上，Gemini 原生路由同样受并发闸门约束。
+	relayGeminiRouter.Use(middleware.RelayConcurrencyLimit())
 	{
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {

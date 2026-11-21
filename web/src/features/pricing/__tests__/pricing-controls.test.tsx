@@ -25,6 +25,7 @@ import {
   PricingToolbar,
   type PricingToolbarProps,
 } from '../components/pricing-toolbar'
+import { filterByQuotaType } from '../lib/filters'
 import type { PricingModel } from '../types'
 
 function toolbarProps(): PricingToolbarProps {

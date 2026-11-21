@@ -42,6 +42,8 @@ func TestMain(m *testing.M) {
 	model.LOG_DB = db
 
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	// 单测直连内存库没有走 InitDB，需手动初始化列名引用（group/key 等带引号写法）。
+	model.InitColumnNames()
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true

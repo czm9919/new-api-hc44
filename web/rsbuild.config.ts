@@ -6,9 +6,11 @@ import { pluginReact } from '@rsbuild/plugin-react'
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss'
 import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
+import { generateIconAssets } from './scripts/generate-icon-assets.mjs'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-export default defineConfig(({ envMode }) => {
+export default defineConfig(async ({ envMode }) => {
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
   const serverUrl =
     process.env.VITE_REACT_APP_SERVER_URL ||
@@ -16,6 +18,23 @@ export default defineConfig(({ envMode }) => {
     'http://localhost:3000'
 
   const isProd = envMode === 'production'
+
+  // 生产构建前把 react-icons 物化成静态 SVG（public/icons）。
+  // 生成器有 stamp 缓存，重复构建会跳过；失败不阻塞构建（图标只是不显示）。
+  if (isProd) {
+    try {
+      const result = await generateIconAssets()
+      if (!result.skipped) {
+        const summary = result.packs
+          .map((pack) => `${pack.id}:${pack.count}`)
+          .join(' ')
+        console.log(`[icons] ${summary}（${result.elapsedMs}ms）`)
+      }
+    } catch (error) {
+      console.warn('[icons] 生成失败，图标将不显示：', error)
+    }
+  }
+
   const devProxy = Object.fromEntries(
     (['/api', '/v1', '/mj', '/pg'] as const).map((key) => [
       key,

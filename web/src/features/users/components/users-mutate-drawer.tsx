@@ -613,6 +613,7 @@ export function UsersMutateDrawer({
           onOpenChange={setQuotaDialogOpen}
           userId={currentRow.id}
           currentQuota={parseQuotaFromDollars(currentQuotaRaw || 0)}
+          userName={currentRow.username}
           onSuccess={refreshUserData}
         />
       )}

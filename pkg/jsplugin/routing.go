@@ -491,6 +491,8 @@ var reservedRouteNamespaces = []string{
 	"/subscriptions",
 	"/system-info",
 	"/task-plugins",
+	"/enhanced-settings",
+	"/contribute-key",
 	"/usage-logs",
 	"/users",
 	"/wallet",

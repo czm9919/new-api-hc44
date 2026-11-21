@@ -89,14 +89,36 @@ export const getUserLogStats = (
 ) => fetchLogStats('/api/log', params, false)
 
 /**
- * Stream the logs matching params, newest first. The server sends one JSON
- * log per line and ends with an API response object; a stream that ends
- * without a successful one is a failed export. Resolves with the log count.
+ * The signed watermark the server puts on the first line of every export
+ * stream (v1.1.0 M1 · B143). It names the operator, the time and the search,
+ * so a leaked file can be traced back to the account that produced it.
+ */
+export interface ExportWatermark {
+  version: number
+  exporter_id: number
+  username: string
+  role: number
+  exported_at: number
+  scope: string
+  filter?: Record<string, unknown>
+  nonce: string
+  signature: string
+}
+
+/**
+ * Stream the logs matching params, newest first. The server opens the stream
+ * with a watermark object and ends with an API response object; a stream that
+ * ends without a successful one is a failed export. Resolves with the log
+ * count.
  */
 export async function exportLogs(
   params: GetLogsParams,
   isAdmin: boolean,
-  options: { signal: AbortSignal; onLog: (log: UsageLog) => void }
+  options: {
+    signal: AbortSignal
+    onLog: (log: UsageLog) => void
+    onWatermark?: (watermark: ExportWatermark) => void
+  }
 ): Promise<number> {
   const queryParams = buildQueryParams(
     params as unknown as Record<string, unknown>
@@ -131,8 +153,20 @@ export async function exportLogs(
       } catch {
         throw createServerError(null)
       }
-      if (typeof parsed.success === 'boolean') result = parsed
-      else options.onLog(parsed as UsageLog)
+      if (typeof parsed.success === 'boolean') {
+        result = parsed
+      } else if (
+        parsed &&
+        typeof parsed === 'object' &&
+        'export_watermark' in parsed
+      ) {
+        // The watermark is metadata, not a log row: hand it to the caller and
+        // keep it out of the CSV body.
+        const watermark = (
+          parsed as { export_watermark?: ExportWatermark }
+        ).export_watermark
+        if (watermark) options.onWatermark?.(watermark)
+      } else options.onLog(parsed as UsageLog)
     }
     if (done) break
   }

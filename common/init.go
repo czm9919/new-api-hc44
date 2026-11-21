@@ -110,6 +110,10 @@ func InitEnv() {
 
 	// Initialize variables with GetEnvOrDefault
 	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
+	// 6 小时拉一次官方价目表；0 关闭（只留手动刷新）。
+	OfficialPricingSyncInterval = GetEnvOrDefault("OFFICIAL_PRICING_SYNC_INTERVAL", 21600)
+	// 快照超过这个年龄就认为「该换了」，阈值比自动同步间隔短。
+	OfficialPricingStaleSeconds = GetEnvOrDefault("OFFICIAL_PRICING_STALE_SECONDS", 3600)
 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
@@ -143,6 +147,11 @@ func InitEnv() {
 	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", true)
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
+
+	// QQ 机器人接口预算按群规模配：机器人出口 IP 固定，一个 IP 承载整群用户。
+	QQAgentRateLimitEnable = GetEnvOrDefaultBool("QQ_AGENT_RATE_LIMIT_ENABLE", true)
+	QQAgentRateLimitNum = GetEnvOrDefault("QQ_AGENT_RATE_LIMIT", 120)
+	QQAgentRateLimitDuration = int64(GetEnvOrDefault("QQ_AGENT_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
 }
 

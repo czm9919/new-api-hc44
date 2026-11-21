@@ -38,6 +38,8 @@ web/node_modules
 web/.tanstack
 web/.rsbuild
 .eslintcache
+# 图标静态资源：由容器内构建脚本按 stamp 重新生成，避免拷入本地产物
+web/public/icons
 
 # ---------- 与本镜像无关的目录 ----------
 electron
@@ -49,3 +51,7 @@ e2e
 .selftest
 .selftest-build.log
 docker-sim
+
+# ---------- Dockerfile.local-dist：复用本机已构建的入口文件 ----------
+!web/dist/index.html
+!web/dist/static

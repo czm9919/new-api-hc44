@@ -115,13 +115,27 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		duration,
 	)
 	if err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (mark=%s): %v", mark, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		// v1.1.0 M2 · B12：Redis 故障不再返回 500——限流是可用性组件，
+		// 把外部依赖抖动放大成全站不可用是本末倒置。改为记录健康状态后
+		// 显式降级到内存限流器（同一 key 口径，恢复时行为一致）。
+		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (mark=%s), falling back to memory limiter: %v", mark, err))
+		common.MarkRedisFailure("rate_limit_ip", err)
+		fallbackMemoryIPRateLimiter(c, maxRequestNum, duration, mark)
 		return
 	}
+	common.MarkRedisSuccess()
 	if !allowed {
 		writeRateLimited(c, ttlSeconds)
+	}
+}
+
+// fallbackMemoryIPRateLimiter 是 Redis 出错时的降级路径：按 IP 走内存限流。
+// key 口径与 memoryRateLimiter 保持一致（mark + IP），Redis 恢复后计数语义不变。
+func fallbackMemoryIPRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
+	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+	key := mark + c.ClientIP()
+	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+		writeRateLimited(c, duration)
 	}
 }
 
@@ -213,6 +227,26 @@ func UploadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.UploadRateLimitNum, common.UploadRateLimitDuration, "UP")
 }
 
+// QQAgentRateLimit 保护面向 AstrBot 机器人的 /api/qq/agent/* 接口。
+//
+// 这些接口的调用方不是人而是机器人：出口 IP 固定，一个 IP 代表整群成员，
+// 所以走 IP 固定窗口（按群规模给预算），而不是按用户维度。
+//
+// 它挡的是「令牌泄露之后」的滥用：令牌校验是常数时间比较，爆破不可行，
+// 但泄露的令牌可以无限次调用 verify，每次都要查一次 qq_bind_codes 再写一次
+// users。限流把这条路压成有上界的速率，同时给正常群留足余量。
+//
+// 注意：ClientIP() 的取值依赖 Gin 的 TrustedProxies 配置。站点在反向代理后
+// 且代理未受信时，所有请求会落到同一个 key（等价全局限流）；反过来若代理
+// 被信任而 X-Forwarded-For 未清洗，限流可被伪造头绕过——这与站内其它 IP
+// 限流同一口径，部署侧按需配置即可。
+func QQAgentRateLimit() func(c *gin.Context) {
+	if !common.QQAgentRateLimitEnable {
+		return defNext
+	}
+	return rateLimitFactory(common.QQAgentRateLimitNum, common.QQAgentRateLimitDuration, "QA")
+}
+
 // userRateLimitFactory creates a rate limiter keyed by authenticated user ID
 // instead of client IP, making it resistant to proxy rotation attacks.
 // Must be used AFTER authentication middleware (UserAuth).
@@ -250,11 +284,16 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (key=%s): %v", key, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		// B12：与 redisRateLimiter 相同的显式降级——内存限流沿用同一 key。
+		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (key=%s), falling back to memory limiter: %v", key, err))
+		common.MarkRedisFailure("rate_limit_user", err)
+		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			writeRateLimited(c, duration)
+		}
 		return
 	}
+	common.MarkRedisSuccess()
 	if !allowed {
 		writeRateLimited(c, ttlSeconds)
 	}

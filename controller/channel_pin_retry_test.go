@@ -138,9 +138,14 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 			previousMaxGroups := setting.GetMaxTokenAutoGroups()
 			affinity := operation_setting.GetChannelAffinitySetting()
 			previousAffinity := *affinity
+			// hc 默认给 default 分组启用 smart 策略（无视优先级分层），而本测试
+			// 断言的是优先级分层顺序；测试内清空分组策略覆盖，走原生加权随机。
+			previousByGroup := operation_setting.GetLoadBalanceSetting().ByGroup
+			operation_setting.GetLoadBalanceSetting().ByGroup = map[string]string{}
 			t.Cleanup(func() {
 				common.RetryTimes = previousRetryTimes
 				*affinity = previousAffinity
+				operation_setting.GetLoadBalanceSetting().ByGroup = previousByGroup
 				require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups))
 				require.NoError(t, setting.UpdateMaxTokenAutoGroups(fmt.Sprint(previousMaxGroups)))
 			})

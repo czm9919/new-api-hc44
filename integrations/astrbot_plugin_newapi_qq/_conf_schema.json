@@ -1,0 +1,38 @@
+{
+  "api_base": {
+    "type": "string",
+    "description": "New API 站点地址（不要带 /api 后缀）",
+    "default": "http://127.0.0.1:3000",
+    "hint": "例如 https://api.example.com"
+  },
+  "agent_token": {
+    "type": "string",
+    "description": "机器人服务令牌（与站点 option qq_agent_token 一致）",
+    "default": "",
+    "hint": "在面板「幸运大转盘 → 抽奖设置 → 机器人」里生成并填写；明文只在生成/轮换时显示一次"
+  },
+  "bind_command": {
+    "type": "string",
+    "description": "绑定命令名（不带斜杠）",
+    "default": "绑定",
+    "hint": "默认同时响应 /绑定 与 /bind；改成别的名字后只响应该名字"
+  },
+  "timeout_seconds": {
+    "type": "int",
+    "description": "请求站点超时秒数",
+    "default": 10,
+    "hint": "站点在海外或链路差可以调到 20"
+  },
+  "cooldown_seconds": {
+    "type": "int",
+    "description": "绑定成功后的冷却秒数",
+    "default": 30,
+    "hint": "同一个 QQ 绑定成功后要等这么久才能再次发起，防连点"
+  },
+  "retry_cooldown_seconds": {
+    "type": "int",
+    "description": "绑定失败后的冷却秒数",
+    "default": 3,
+    "hint": "打错一位能立刻重试；填 0 表示失败不冷却（不建议，连点会变成对站点的轮询）"
+  }
+}

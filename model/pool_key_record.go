@@ -19,9 +19,9 @@ import (
 //     上游的真实额度，只是把同一个账号重复计入号池）
 //
 // 因此这里单独记一份「谁在什么时候用哪个上游账号贡献了哪把 key」的台账：
-//  - KeyHash 只存 SHA-256 指纹，不落明文，避免数据库泄露直接带走上游密钥；
-//  - (Provider, KeyHash) 唯一，保证同一把 key 全局只能存在一条有效记录；
-//  - (Provider, AccountKey) 用于拦截同一上游账号的重复贡献。
+//   - KeyHash 只存 SHA-256 指纹，不落明文，避免数据库泄露直接带走上游密钥；
+//   - (Provider, KeyHash) 唯一，保证同一把 key 全局只能存在一条有效记录；
+//   - (Provider, AccountKey) 用于拦截同一上游账号的重复贡献。
 type PoolKeyRecord struct {
 	Id       int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	Provider string `json:"provider" gorm:"type:varchar(32);not null;uniqueIndex:idx_pool_key_provider_hash"`
@@ -147,9 +147,9 @@ func UpsertPoolKeyRecord(rec *PoolKeyRecord) error {
 		return DB.Create(rec).Error
 	}
 	updates := map[string]any{
-		"key_mask":      rec.KeyMask,
-		"status":        1,
-		"channel_id":    rec.ChannelId,
+		"key_mask":       rec.KeyMask,
+		"status":         1,
+		"channel_id":     rec.ChannelId,
 		"contributor_id": rec.ContributorId,
 	}
 	// 账号标识只在新值非空时覆盖，避免后台批量补录时把已有账号清空。

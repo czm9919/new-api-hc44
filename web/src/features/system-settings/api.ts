@@ -22,6 +22,10 @@ import type {
   ConfirmPaymentComplianceResponse,
   FetchUpstreamRatiosRequest,
   LogCleanupTask,
+  OfficialPricingRefreshResponse,
+  OfficialPricingStatusResponse,
+  RatioDiffPreviewRequest,
+  RatioDiffPreviewResponse,
   SystemOptionsResponse,
   SystemTaskListResponse,
   SystemTaskFilters,
@@ -111,6 +115,15 @@ export async function resetModelRatios() {
   return res.data
 }
 
+/** v1.1.0 M1 · B22 倍率变更影响预览（近 7 天线性外推）。 */
+export async function previewRatioDiff(request: RatioDiffPreviewRequest) {
+  const res = await api.post<RatioDiffPreviewResponse>(
+    '/api/option/ratio_diff_preview',
+    request
+  )
+  return res.data
+}
+
 export async function getUpstreamChannels() {
   const res = await api.get<UpstreamChannelsResponse>(
     '/api/ratio_sync/channels'
@@ -123,5 +136,26 @@ export async function fetchUpstreamRatios(request: FetchUpstreamRatiosRequest) {
     '/api/ratio_sync/fetch',
     request
   )
+  return res.data
+}
+
+/**
+ * 刷新官方定价快照（hc41）。
+ * 只写「官方参考价」供 /rankings 价格榜使用，不改本站任何倍率。
+ */
+export async function refreshOfficialPricing() {
+  const res = await api.post<OfficialPricingRefreshResponse>(
+    '/api/ratio_sync/official/refresh'
+  )
+  return res.data
+}
+
+/**
+ * 读官方价快照的当前状态（hc42）。
+ * 复用公开的价格榜接口，只是不关心 rows —— 管理端要的是「上次同步在什么时候、
+ * 自动同步开没开、有没有源在吃旧数据」。
+ */
+export async function getOfficialPricingStatus(): Promise<OfficialPricingStatusResponse> {
+  const res = await api.get('/api/pricing/leaderboard')
   return res.data
 }

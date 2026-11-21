@@ -1,0 +1,17 @@
+name: astrbot_plugin_newapi_qq
+display_name: New API QQ 绑定
+desc: 把 QQ 号绑定到 New API 面板账号，解锁幸运大转盘与免费模型。⚠️ 本插件只是「调用端」，必须先在站点创建机器人服务令牌，否则所有命令都会返回 503。
+version: v1.0.2
+author: czm9919
+repo: https://github.com/czm9919/astrbot_plugin_newapi_qq
+short_desc: QQ 号绑定 New API 账号
+astrbot_version: ">=4.0.0"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+tags:
+  - QQ
+  - 账号绑定
+  - New API
+  - 免费额度
+social_link: https://github.com/czm9919

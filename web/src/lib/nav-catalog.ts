@@ -30,9 +30,12 @@ For commercial licensing, please contact support@quantumnous.com
  */
 import {
   Activity,
+  Bell,
   Box,
   ClipboardList,
   CreditCard,
+  Dices,
+  FileBarChart,
   FileText,
   FlaskConical,
   Key,
@@ -45,9 +48,12 @@ import {
   Radio,
   ServerCog,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Ticket,
+  TrendingDown,
+  Trophy,
   User,
   Users,
   Wallet,
@@ -140,6 +146,22 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         icon: ClipboardList,
       },
       {
+        // hc31 · B89 成本优化建议：帮助用户识别高倍率模型与可省额度
+        // 注意：必须排在审计日志之后，侧边栏历史配置要求审计入口紧跟用量日志
+        id: 'general.costInsight',
+        titleKey: 'Cost Insights',
+        url: '/cost-insight',
+        icon: TrendingDown,
+      },
+      {
+        // v1.1.0 M1 · B26 对账月结单：管理员专属报表入口
+        id: 'general.statement',
+        titleKey: 'Monthly Statement',
+        url: '/usage-logs/statement',
+        icon: FileBarChart,
+        requiredRole: ROLE.ADMIN,
+      },
+      {
         id: 'general.taskLogs',
         titleKey: 'Task Logs',
         url: '/usage-logs/task',
@@ -172,11 +194,33 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         icon: ShieldCheck,
       },
       {
+        // hc31 · B211 站内通知中心：外部渠道缺失/失败也不丢通知的兜底收件箱
+        id: 'personal.notifications',
+        titleKey: 'Notifications',
+        url: '/notifications',
+        icon: Bell,
+      },
+      {
+        // hc31 · B93 密钥泄露风险自查：token × IP 聚合 + 白名单冲突检测
+        id: 'personal.tokenRisk',
+        titleKey: 'Key Risk Check',
+        url: '/token-risk',
+        icon: ShieldAlert,
+      },
+      {
         // 本站定制：号池（贡献上游密钥 + 我的号池订阅 + 管理员运营面板）
         id: 'personal.keyPool',
         titleKey: 'Key Pool',
         url: '/contribute-key',
         icon: KeyRound,
+      },
+      {
+        // v1.1.0 M2 大转盘：每日免费抽奖，奖品进免费额度；
+        // 与免费模型共用「绑定 QQ」门禁。
+        id: 'personal.lottery',
+        titleKey: 'Lucky Wheel',
+        url: '/lottery',
+        icon: Dices,
       },
     ],
   },
@@ -192,6 +236,22 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         requiredRole: ROLE.ADMIN,
       },
       {
+        // hc35 渠道健康：智能路由健康记忆的可靠性总览（B13–B15）
+        id: 'admin.channelHealth',
+        titleKey: 'Channel Health',
+        url: '/channel-health',
+        icon: Activity,
+        requiredRole: ROLE.ADMIN,
+      },
+      {
+        // hc36 安全巡检：跨用户密钥风险 + 全站两步验证覆盖率
+        id: 'admin.securityOverview',
+        titleKey: 'Security Overview',
+        url: '/security-overview',
+        icon: ShieldCheck,
+        requiredRole: ROLE.ADMIN,
+      },
+      {
         id: 'admin.models',
         titleKey: 'Models',
         url: '/models/metadata',
@@ -203,6 +263,14 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         titleKey: 'Users',
         url: '/users',
         icon: Users,
+        requiredRole: ROLE.ADMIN,
+      },
+      {
+        // hc34 用户消耗排行榜：管理员按窗口内消费额度倒序查看头部用户
+        id: 'admin.consumptionRank',
+        titleKey: 'Consumption Rank',
+        url: '/consumption-rank',
+        icon: Trophy,
         requiredRole: ROLE.ADMIN,
       },
       {
@@ -228,7 +296,7 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
       },
       {
         id: 'admin.taskPlugins',
-        titleKey: 'Task Plugins',
+        titleKey: 'Plugins',
         url: '/task-plugins',
         icon: PlugZap,
         requiredRole: ROLE.SUPER_ADMIN,

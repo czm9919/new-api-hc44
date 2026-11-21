@@ -27,7 +27,9 @@ export const THEME_PRESETS = [
   {
     value: 'default',
     name: 'Default',
-    swatches: ['oklch(0.72 0.18 250)', 'oklch(0.7 0.12 280)'],
+    // Monochrome ink: the default preset is the flat/minimal system, so its
+    // swatch is graphite rather than a rainbow.
+    swatches: ['oklch(0.235 0 0)', 'oklch(0.905 0 0)'],
   },
   {
     // Inspired by Anthropic's official brand language: warm cream canvas

@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { Spinner } from '@/components/ui/spinner'
+import { applyExternalScriptIntegrity } from '@/lib/external-script'
 
 type TelegramLoginDialogProps = {
   open: boolean
@@ -62,6 +63,7 @@ export function TelegramLoginDialog(props: TelegramLoginDialogProps) {
     const script = document.createElement('script')
     script.async = true
     script.src = 'https://telegram.org/js/telegram-widget.js?22'
+    applyExternalScriptIntegrity(script, script.src)
     script.dataset.telegramLogin = botName
     script.dataset.size = 'large'
     script.dataset.radius = '8'

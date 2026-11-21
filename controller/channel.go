@@ -582,6 +582,11 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		return fmt.Errorf("channel cannot be empty")
 	}
 
+	// SSRF 校验（v1.1.0 M1 · B76）：拒绝指向云元数据端点/非法格式的上游地址。
+	if err := service.ValidateChannelBaseURL(channel.GetBaseURL()); err != nil {
+		return common.NewMessage("Invalid channel base URL: {{error}}", map[string]any{"error": err.Error()})
+	}
+
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return common.NewMessage("Invalid channel settings format: {{error}}", map[string]any{"error": err.Error()})

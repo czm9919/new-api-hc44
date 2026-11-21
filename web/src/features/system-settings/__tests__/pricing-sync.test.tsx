@@ -484,7 +484,15 @@ describe('pricing synchronization', () => {
         },
       ],
     })
-    expect(post).toHaveBeenCalledTimes(2)
+    // 两次 /fetch：首次选中源、以及 stale 之后 Reload 再选一次；
+    // 一次 /official/refresh：同步成功后顺手刷新官方价快照（hc41 起）。
+    const postUrls = post.mock.calls.map(([url]) => url)
+    expect(
+      postUrls.filter((url) => url === '/api/ratio_sync/fetch')
+    ).toHaveLength(2)
+    expect(
+      postUrls.filter((url) => url === '/api/ratio_sync/official/refresh')
+    ).toHaveLength(1)
     expect(
       get.mock.calls.filter(([url]) => url === '/api/option/model_pricing')
         .length

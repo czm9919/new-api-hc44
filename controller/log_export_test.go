@@ -23,15 +23,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// callLogHandler runs a log handler as the given user and returns the JSON
-// lines of the response.
-func callLogHandler(t *testing.T, handler gin.HandlerFunc, userId int, role int, query string) []map[string]any {
+// callExportHandler runs a log handler as the given user and returns the raw
+// recorder plus the parsed JSON lines, so watermark-header assertions can see
+// the response as the client does.
+func callExportHandler(t *testing.T, handler gin.HandlerFunc, userId int, role int, query string) (*httptest.ResponseRecorder, []map[string]any) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log?"+query, nil)
 	ctx.Set("id", userId)
 	ctx.Set("role", role)
+	// The watermark records the exporter name, which the real middleware puts
+	// in the context; tests only carry ids.
+	if name, ok := map[int]string{1: "alice", 2: "bob", 3: "admin"}[userId]; ok {
+		ctx.Set("username", name)
+	}
 	handler(ctx)
 	var lines []map[string]any
 	for line := range strings.SplitSeq(strings.TrimSpace(recorder.Body.String()), "\n") {
@@ -39,15 +45,37 @@ func callLogHandler(t *testing.T, handler gin.HandlerFunc, userId int, role int,
 		require.NoError(t, common.UnmarshalJsonStr(line, &value))
 		lines = append(lines, value)
 	}
+	return recorder, lines
+}
+
+// callLogHandler runs a log handler as the given user and returns the JSON
+// lines of the response.
+func callLogHandler(t *testing.T, handler gin.HandlerFunc, userId int, role int, query string) []map[string]any {
+	t.Helper()
+	_, lines := callExportHandler(t, handler, userId, role, query)
 	return lines
 }
 
 func exportedRequestIds(lines []map[string]any) []any {
 	ids := make([]any, 0, len(lines))
 	for _, line := range lines[:len(lines)-1] {
+		if _, isWatermark := line["export_watermark"]; isWatermark {
+			continue
+		}
 		ids = append(ids, line["request_id"])
 	}
 	return ids
+}
+
+// firstLogLine returns the first non-watermark line of an export stream, which
+// is the newest log row.
+func firstLogLine(lines []map[string]any) map[string]any {
+	for _, line := range lines {
+		if _, isWatermark := line["export_watermark"]; !isWatermark {
+			return line
+		}
+	}
+	return nil
 }
 
 // seedExportLogs stores logs of two users: three in the last hour and one
@@ -133,19 +161,29 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			assert.EqualValues(t, 2, listed["data"].(map[string]any)["total"])
 
 			own := callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, query)
-			require.Len(t, own, 3)
+			require.Len(t, own, 4)
+			watermarkObj, isWatermark := own[0]["export_watermark"].(map[string]any)
+			require.True(t, isWatermark, "the stream opens with the export watermark")
+			assert.EqualValues(t, 1, watermarkObj["exporter_id"])
+			assert.Equal(t, "alice", watermarkObj["username"])
+			assert.Equal(t, "self", watermarkObj["scope"])
+			assert.NotEmpty(t, watermarkObj["nonce"])
+			assert.NotEmpty(t, watermarkObj["signature"])
 			assert.Equal(t, []any{"a-2", "a-1"}, exportedRequestIds(own))
-			assert.Equal(t, map[string]any{"success": true, "message": "", "data": map[string]any{"count": float64(2)}}, own[2])
-			assert.Equal(t, float64(1), own[0]["id"], "user exports carry list positions, not row ids")
-			assert.Empty(t, own[1]["channel_name"])
-			assert.NotContains(t, own[1]["other"], "admin_info")
+			assert.Equal(t, map[string]any{"success": true, "message": "", "data": map[string]any{"count": float64(2)}}, own[3])
+			assert.Equal(t, float64(1), firstLogLine(own)["id"], "user exports carry list positions, not row ids")
+			assert.Empty(t, own[2]["channel_name"])
+			assert.NotContains(t, own[2]["other"], "admin_info")
 
 			all := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=gpt-%25")
-			require.Len(t, all, 4)
+			require.Len(t, all, 5)
+			allWatermark, isWatermark := all[0]["export_watermark"].(map[string]any)
+			require.True(t, isWatermark)
+			assert.Equal(t, "all", allWatermark["scope"])
 			assert.Equal(t, []any{"a-2", "b-1", "a-1"}, exportedRequestIds(all))
-			assert.Equal(t, "primary", all[2]["channel_name"])
-			assert.Contains(t, all[2]["other"], "admin_info")
-			assert.Equal(t, true, all[3]["success"])
+			assert.Equal(t, "primary", all[3]["channel_name"])
+			assert.Contains(t, all[3]["other"], "admin_info")
+			assert.Equal(t, true, all[4]["success"])
 		})
 	}
 }
@@ -197,7 +235,8 @@ func TestLogExportRules(t *testing.T) {
 		disabled := callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, recent)
 		require.Len(t, disabled, 1)
 		assert.Equal(t, "Log export is disabled", disabled[0]["message_key"])
-		assert.Equal(t, true, callLogHandler(t, ExportUserLogs, 3, common.RoleAdminUser, recent)[0]["success"], "administrators export their own logs even when users cannot")
+		admin := callLogHandler(t, ExportUserLogs, 3, common.RoleAdminUser, recent)
+		assert.Equal(t, true, admin[len(admin)-1]["success"], "administrators export their own logs even when users cannot")
 	})
 
 	t.Run("one export per user", func(t *testing.T) {
@@ -210,7 +249,67 @@ func TestLogExportRules(t *testing.T) {
 		other := callLogHandler(t, ExportUserLogs, 2, common.RoleCommonUser, recent)
 		assert.Equal(t, true, other[len(other)-1]["success"], "other users are not blocked")
 		release()
-		assert.Len(t, callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, recent), 3)
+		assert.Len(t, callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, recent), 4)
+	})
+}
+
+func TestLogExportWatermark(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, _ := newAuditTestDatabase(t, "sqlite", "")
+	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Log{}, &model.AuditLog{}))
+	now := time.Now().Unix()
+	seedExportLogs(t, db, db, now)
+	query := fmt.Sprintf("start_timestamp=%d&end_timestamp=%d", now-2*24*3600, now+3600)
+
+	t.Run("stream opens with a verifiable watermark", func(t *testing.T) {
+		recorder, lines := callExportHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query)
+		require.NotEmpty(t, lines)
+		obj, isWatermark := lines[0]["export_watermark"].(map[string]any)
+		require.True(t, isWatermark, "first line must be the watermark object")
+
+		watermark := &service.ExportWatermark{}
+		raw, err := common.Marshal(obj)
+		require.NoError(t, err)
+		require.NoError(t, common.UnmarshalJsonStr(string(raw), watermark))
+		require.NoError(t, watermark.Verify(), "a fresh watermark must verify against the deployment secret")
+
+		header := recorder.Header().Get("X-Export-Watermark")
+		assert.Equal(t, watermark.Signature, header, "the header carries the same signature")
+		assert.Equal(t, watermark.Nonce, recorder.Header().Get("X-Export-Watermark-Id"))
+		assert.Equal(t, "all", watermark.Scope)
+		assert.EqualValues(t, 3, watermark.ExporterId)
+		assert.LessOrEqual(t, watermark.ExportedAt, common.GetTimestamp())
+	})
+
+	t.Run("edited watermark fails verification", func(t *testing.T) {
+		watermark, err := service.NewExportWatermark(7, "mallory", common.RoleAdminUser, service.ExportScopeAll, map[string]any{"type": 2})
+		require.NoError(t, err)
+		require.NoError(t, watermark.Verify())
+
+		watermark.Username = "alice"
+		assert.ErrorIs(t, watermark.Verify(), service.ErrExportWatermarkSignature, "claiming another exporter must break the signature")
+
+		watermark, err = service.NewExportWatermark(7, "mallory", common.RoleAdminUser, service.ExportScopeAll, nil)
+		require.NoError(t, err)
+		watermark.Signature = strings.Repeat("0", len(watermark.Signature))
+		assert.ErrorIs(t, watermark.Verify(), service.ErrExportWatermarkSignature)
+	})
+
+	t.Run("wrong version is rejected", func(t *testing.T) {
+		watermark, err := service.NewExportWatermark(1, "alice", common.RoleCommonUser, service.ExportScopeSelf, nil)
+		require.NoError(t, err)
+		watermark.Version = 999
+		assert.Error(t, watermark.Verify())
+	})
+
+	t.Run("each export carries a fresh nonce", func(t *testing.T) {
+		first, err := service.NewExportWatermark(1, "alice", common.RoleCommonUser, service.ExportScopeSelf, nil)
+		require.NoError(t, err)
+		second, err := service.NewExportWatermark(1, "alice", common.RoleCommonUser, service.ExportScopeSelf, nil)
+		require.NoError(t, err)
+		assert.NotEqual(t, first.Nonce, second.Nonce)
+		assert.NotEqual(t, first.Signature, second.Signature)
 	})
 }
 

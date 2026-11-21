@@ -126,6 +126,16 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	return tokens, err
 }
 
+// GetTokensByIds 按 id 批量取 token（hc31 · B93 管理端风险概览用，不限用户）。
+func GetTokensByIds(ids []int) ([]*Token, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tokens []*Token
+	err := DB.Where("id IN ?", ids).Find(&tokens).Error
+	return tokens, err
+}
+
 // GetUserActiveDailyGiftTokens 返回该用户「活跃且带每日额度」的号池 token（status=1、daily_gift_quota>0、
 // 且关联了上游渠道 source_channel_id>0）。用于「同供应商多 key 不叠加」的去重判断：已存在此类 token
 // 时，新的同供应商贡献只把上游 key 加入号池（增容量），不再发放新的每日订阅额度。

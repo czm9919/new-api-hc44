@@ -28,11 +28,12 @@ import { useStatus } from '@/hooks/use-status'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { exportLogs } from '../../api'
+import { exportLogs, type ExportWatermark } from '../../api'
 import {
   downloadCsv,
   getLogCsvHeader,
   getLogCsvRow,
+  getLogCsvWatermarkRow,
   toCsvLine,
 } from '../../lib/export'
 import { buildApiParams, getDefaultTimeRange } from '../../lib/utils'
@@ -99,6 +100,9 @@ export function ExportLogsDialog() {
     const controller = new AbortController()
     abortRef.current = controller
     const lines = [toCsvLine(getLogCsvHeader(isAdminView, t))]
+    // The server signs the export with the operator identity; keeping it here
+    // lets the file carry that watermark below the data (B143).
+    const watermark: { current: ExportWatermark | null } = { current: null }
     setExportedCount(0)
     try {
       const count = await exportLogs(
@@ -121,8 +125,14 @@ export function ExportLogsDialog() {
             lines.push(toCsvLine(getLogCsvRow(log, isAdminView, t)))
             if (lines.length % 500 === 0) setExportedCount(lines.length - 1)
           },
+          onWatermark: (received) => {
+            watermark.current = received
+          },
         }
       )
+      if (watermark.current) {
+        lines.push(toCsvLine(getLogCsvWatermarkRow(watermark.current, t)))
+      }
       downloadCsv(
         `usage-logs-${dayjs(range.start).format('YYYYMMDD')}-${dayjs(range.end).format('YYYYMMDD')}.csv`,
         lines

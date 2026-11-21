@@ -25,6 +25,7 @@ import { PerformanceSection } from '../maintenance/performance-section'
 import { UpdateCheckerSection } from '../maintenance/update-checker-section'
 import type { OperationsSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { NotifyCatalogSection } from './notify-catalog-section'
 
 const OPERATIONS_SECTIONS = [
   {
@@ -82,6 +83,13 @@ const OPERATIONS_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    // hc32 · B213 管理端通知事件覆盖表：只读，数据来自
+    // GET /api/option/notify_event_catalog（hc31 已有接口）
+    id: 'notify-catalog',
+    titleKey: 'Notification Events',
+    build: () => <NotifyCatalogSection />,
   },
   {
     id: 'worker',

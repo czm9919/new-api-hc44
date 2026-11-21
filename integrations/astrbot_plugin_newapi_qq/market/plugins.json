@@ -1,0 +1,28 @@
+{
+  "czm9919/astrbot_plugin_newapi_qq": {
+    "author": "czm9919",
+    "name": "astrbot_plugin_newapi_qq",
+    "version": "1.0.2",
+    "repo": "https://github.com/czm9919/astrbot_plugin_newapi_qq",
+    "display_name": "New API QQ 绑定",
+    "short_desc": "QQ 号绑定 New API 账号",
+    "desc": "把 QQ 号绑定到 New API 面板账号，解锁幸运大转盘与免费模型。用户在面板生成 8 位一次性绑定码，私聊机器人发 /绑定 <码> 即可完成绑定；绑定码一次性、10 分钟过期，一个 QQ 只绑一个账号。⚠️ 本插件只是调用端：站点必须是配套的 New API 定制分支（v1.0.0-rc.51+hc37 起），并在面板生成机器人服务令牌，否则所有命令都返回 503。",
+    "download_url": "https://github.com/czm9919/astrbot_plugin_newapi_qq/releases/download/v1.0.2/astrbot_plugin_newapi_qq-v1.0.2.zip",
+    "category": "工具",
+    "tags": [
+      "QQ",
+      "账号绑定",
+      "New API",
+      "免费额度"
+    ],
+    "support_platforms": [
+      "aiocqhttp",
+      "qq_official"
+    ],
+    "astrbot_version": ">=4.0.0",
+    "social_link": "https://github.com/czm9919",
+    "updated_at": "2026-11-21T07:20:00Z",
+    "stars": 0,
+    "download_count": 0
+  }
+}

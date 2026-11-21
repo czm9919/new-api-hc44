@@ -43,6 +43,12 @@ type AuditLog struct {
 	RequestId  string     `json:"request_id" gorm:"type:varchar(64);index"`
 	Content    string     `json:"content" gorm:"type:text"`
 	Other      AuditOther `json:"other" gorm:"type:json"`
+	// 审计哈希链（v1.1.0 M1 · B78）：PrevHash 指向前一条记录的 Hash，
+	// Hash 覆盖本条正文与 PrevHash。任何一行的正文被改写或整行被删除，
+	// 校验都能定位到断点。历史行（引入本字段之前写入的）Hash 为空，
+	// 校验从第一条带哈希的记录开始。
+	PrevHash string `json:"prev_hash" gorm:"type:varchar(64)"`
+	Hash     string `json:"hash" gorm:"type:varchar(64);index"`
 }
 
 type AuditLogFilter struct {
@@ -116,10 +122,15 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
 		return
 	}
+	// 哈希链封存（v1.1.0 M1 · B78）：插入前补 PrevHash/Hash，失败回滚链头。
+	auditChainMu.Lock()
+	headBefore := auditChainLastHash
+	sealAuditEntry(LOG_DB, &entry)
 	var row any = &entry
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		encoded, err := common.Marshal(entry.Other)
 		if err != nil {
+			auditChainMu.Unlock()
 			logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
 			return
 		}
@@ -132,8 +143,12 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		}{AuditLog: entry, EncodedOther: string(encoded)}
 	}
 	if err := LOG_DB.Table("audit_logs").Create(row).Error; err != nil {
+		auditChainLastHash = headBefore
+		auditChainMu.Unlock()
 		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
+		return
 	}
+	auditChainMu.Unlock()
 }
 
 func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*AuditLog, int64, error) {
@@ -246,6 +261,34 @@ func GetUserAccessTokenStatus(userId int) (*UserAccessTokenStatus, error) {
 	return status, nil
 }
 
+// KnownLoginIP reports whether userId has ever completed a successful login
+// from ip, and whether the account has any recorded login at all (v1.1.0 M1 ·
+// B05). The scan is bounded: only the newest successful logins are considered,
+// so an old address that has not been used for a long time is reported as
+// unrecognized again after historyLimit newer logins — which is the desired
+// behaviour for a device-change alert.
+func KnownLoginIP(userId int, ip string) (knownIP bool, hasHistory bool, err error) {
+	if LOG_DB == nil || userId <= 0 || ip == "" {
+		return true, false, nil // nothing to compare against: never alert
+	}
+	const historyLimit = 500
+	var recent []string
+	err = LOG_DB.Model(&AuditLog{}).
+		Where("user_id = ? AND category = ? AND success = ?", userId, AuditCategoryLogin, true).
+		Order("id desc").
+		Limit(historyLimit).
+		Pluck("ip", &recent).Error
+	if err != nil {
+		return true, false, err
+	}
+	for _, seen := range recent {
+		if seen == ip {
+			return true, true, nil
+		}
+	}
+	return false, len(recent) > 0, nil
+}
+
 // MigrateAuditLogs also supports independently configured ClickHouse log stores.
 // No TTL clause or usage-log cleanup integration is intentional.
 func MigrateAuditLogs() error {
@@ -256,7 +299,8 @@ func MigrateAuditLogs() error {
 		id Int64 DEFAULT 0, event_id String, user_id Int64, username String, actor_role Int32,
 		created_at Int64, category String, action String, token_ref String,
 		auth_method String, ip String, user_agent String, method String, route String,
-		status Int32, success UInt8, request_id String, content String, other JSON
+		status Int32, success UInt8, request_id String, content String, other JSON,
+		prev_hash String DEFAULT '', hash String DEFAULT ''
 	) ENGINE = MergeTree()
 	PARTITION BY toYYYYMM(toDateTime(created_at))
 	ORDER BY (created_at, event_id)`).Error

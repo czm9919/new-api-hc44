@@ -232,15 +232,22 @@ func TestApplyParamOverrideReplace(t *testing.T) {
 func TestApplyParamOverrideRegexReplace(t *testing.T) {
 	// regex_replace example:
 	// {"operations":[{"path":"model","mode":"regex_replace","from":"^gpt-","to":"openai/gpt-"}]}
-	input := []byte(`{"model":"gpt-4o-mini","temperature":0.7}`)
-	override := map[string]any{
-		"operations": []any{
-			map[string]any{
-				"path": "model",
-				"mode": "regex_replace",
-				"from": "^gpt-",
-				"to":   "openai/gpt-",
-			},
+	operation := map[string]any{"mode": "regex_replace"}
+	override := map[string]any{"operations": []any{operation}}
+	// Reusing a channel configuration must apply the current pattern on every request.
+	for _, tt := range []struct {
+		name  string
+		input string
+		path  string
+		from  string
+		to    string
+		want  string
+	}{
+		{
+			name:  "single path",
+			input: `{"model":"gpt-4o-mini","temperature":0.7}`,
+			path:  "model", from: "^gpt-", to: "openai/gpt-",
+			want: `{"model":"openai/gpt-4o-mini","temperature":0.7}`,
 		},
 		{
 			name:  "next request uses updated pattern",
@@ -276,12 +283,6 @@ func TestApplyParamOverrideRegexReplace(t *testing.T) {
 			assert.JSONEq(t, tt.want, string(out))
 		})
 	}
-
-	out, err := ApplyParamOverride(input, override, nil)
-	if err != nil {
-		t.Fatalf("ApplyParamOverride returned error: %v", err)
-	}
-	assertJSONEqual(t, `{"model":"openai/gpt-4o-mini","temperature":0.7}`, string(out))
 }
 
 func TestApplyParamOverrideReplaceRequiresFrom(t *testing.T) {

@@ -136,3 +136,64 @@ export type RankingsSnapshot = {
   /** 100%-stacked area history of token share by vendor over the period. */
   vendor_share_history: VendorShareSeries
 }
+
+// ----------------------------------------------------------------------------
+// Price leaderboard (hc41)
+// ----------------------------------------------------------------------------
+//
+// 本站单价统一换算成「美元 / 百万 tokens」；按次计费的模型单独用
+// `site_request_price` 并排在按 token 计费的模型之后。
+// `official_*` 来自管理员「一键同步官方定价」落库的官方参考价快照。
+
+export type PricingLeaderboardRow = {
+  rank: number
+  model_name: string
+  vendor?: string
+  /** 'token' | 'request' */
+  unit: string
+  billing_mode?: string
+  site_input_price: number
+  site_output_price: number
+  site_cache_price?: number
+  site_request_price?: number
+  official_input_price?: number
+  official_output_price?: number
+  official_source?: string
+  /** 相对官方价的偏差百分比：负数代表比官方便宜。 */
+  discount_pct?: number
+  has_official: boolean
+}
+
+/** 单个官方源的健康状况（hc42：自动同步后会带上）。 */
+export type PricingSourceState = {
+  count: number
+  fetched_at: number
+  last_error?: string
+}
+
+export type PricingLeaderboard = {
+  rows: PricingLeaderboardRow[]
+  total: number
+  limit: number
+  official_available: boolean
+  fetched_at?: number
+  /** 官方价内容最后一次真正变化的时间。 */
+  updated_at?: number
+  sources?: string[]
+  counts?: Record<string, number>
+  official_total?: number
+  revision?: string
+  /** 快照是否已过新鲜期（后端会在过期时后台自动补一次）。 */
+  stale?: boolean
+  /** 快照年龄（秒），前端直接拿它显示「x 分钟前」。 */
+  age_seconds?: number
+  /** 本次抓取失败、条目沿用自上一版快照的源。 */
+  carried?: string[]
+  source_state?: Record<string, PricingSourceState>
+  /** 后端是否启用了自动同步（OFFICIAL_PRICING_SYNC_INTERVAL > 0）。 */
+  auto_sync?: boolean
+  /** 自动同步间隔（秒）。 */
+  sync_interval?: number
+  /** 超过多少秒算过期。 */
+  stale_after?: number
+}

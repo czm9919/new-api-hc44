@@ -73,6 +73,21 @@ func SetupLogger() {
 	}
 }
 
+// CloseLogFile closes the active log file handle. Tests that create their own
+// log directory need this on Windows, where an open handle blocks unlinking.
+func CloseLogFile() {
+	currentLogPathMu.Lock()
+	defer currentLogPathMu.Unlock()
+	if currentLogFile != nil {
+		_ = currentLogFile.Close()
+		currentLogFile = nil
+	}
+	common.LogWriterMu.Lock()
+	gin.DefaultWriter = os.Stdout
+	gin.DefaultErrorWriter = os.Stderr
+	common.LogWriterMu.Unlock()
+}
+
 func LogInfo(ctx context.Context, msg string) {
 	logHelper(ctx, loggerINFO, msg)
 }
@@ -104,6 +119,9 @@ func logHelper(ctx context.Context, level string, msg string) {
 		}
 	}
 	now := time.Now()
+	// 日志脱敏（v1.1.0 M1 · B142）：所有级别都从这一处出口写出，因此在这里
+	// 统一遮盖密钥、邮箱与手机号，调用方无需逐处记得处理。
+	msg = common.RedactSensitive(msg)
 	common.LogWriterMu.RLock()
 	writer := gin.DefaultErrorWriter
 	if level == loggerINFO {

@@ -52,6 +52,17 @@ func sqliteChannelKeyLock(channelID int) *sync.Mutex {
 // OtherInfo and ChannelInfo; the changed ones are written together. The
 // stored channel afterwards is returned, a new key is published to this
 // node's channel cache, and a new status to the channel's abilities.
+// rawChannelKey 读出 channels.key 列的原始落库值（可能是 enc:v1: 密文，也可
+// 能是迁移前的明文）。UpdateChannelLocked 的 WHERE 守卫要求与库里字节一致，
+// 而 AfterFind 会把行数据解封成明文，所以这里必须绕过模型单独取。
+func rawChannelKey(db *gorm.DB, channelID int) (string, error) {
+	var raw string
+	if err := db.Model(&Channel{}).Where("id = ?", channelID).Pluck("key", &raw).Error; err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
 func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*Channel, error) {
 	var channel Channel
 	var keyChanged, statusChanged, written bool
@@ -68,7 +79,13 @@ func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*C
 		channel.Keys = nil
 		updates := map[string]any{}
 		if channel.Key != key {
-			updates["key"], keyChanged = channel.Key, true
+			// 密钥落库前封存（v1.1.0 M1 · B03）；内存里的 channel.Key 保持
+			// 明文，供行缓存发布。
+			sealed, encErr := common.EncryptSecret(channel.Key)
+			if encErr != nil {
+				return nil, encErr
+			}
+			updates["key"], keyChanged = sealed, true
 		}
 		if channel.Status != status {
 			updates["status"], statusChanged = channel.Status, true
@@ -90,7 +107,10 @@ func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*C
 		if err := DB.Where("id = ?", channelID).First(&channel).Error; err != nil {
 			return nil, err
 		}
-		stored := channel.Key
+		stored, err := rawChannelKey(DB, channelID)
+		if err != nil {
+			return nil, err
+		}
 		updates, err := changes()
 		if err != nil {
 			return nil, err
@@ -177,8 +197,13 @@ func UpdateTaskPluginChannelLocked(channelID int, update func(channel *Channel, 
 		}
 		statusChanged, enabled = target.Status != status, target.Status == common.ChannelStatusEnabled
 		target.Keys = nil
+		// 密钥同样封存落库（v1.1.0 M1 · B03）。
+		sealedKey, err := common.EncryptSecret(target.Key)
+		if err != nil {
+			return err
+		}
 		updates := map[string]any{
-			"key":          target.Key,
+			"key":          sealedKey,
 			"status":       target.Status,
 			"other_info":   target.OtherInfo,
 			"channel_info": target.ChannelInfo,

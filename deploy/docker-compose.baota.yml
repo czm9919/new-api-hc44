@@ -15,7 +15,7 @@
 
 services:
   new-api:
-    image: delta-api/new-api:v1.0.0-rc.43-hc26
+    image: delta-api/new-api:v1.0.0-rc.51-hc38
     container_name: new-api
     restart: always
     command: --port 3000 --log-dir /data/logs

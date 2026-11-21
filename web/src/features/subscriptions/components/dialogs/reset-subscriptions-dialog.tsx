@@ -20,7 +20,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DangerConfirmDialog } from '@/components/danger-confirm-dialog'
 import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -66,16 +66,17 @@ export function ResetSubscriptionsDialog() {
   }
 
   return (
-    <ConfirmDialog
+    <DangerConfirmDialog
       open={isOpen}
       onOpenChange={(nextOpen) => !nextOpen && setOpen(null)}
       title={t('Reset subscription quota')}
       desc={t('Reset all active subscriptions under {{plan}}?', {
         plan: planLabel,
       })}
+      objectName={planLabel}
+      objectLabel={t('plan name')}
       confirmText={t('Reset quota')}
       handleConfirm={handleConfirm}
-      disabled={!plan?.id}
       isLoading={resetting}
     >
       <label className='flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm'>
@@ -86,6 +87,6 @@ export function ResetSubscriptionsDialog() {
           aria-label={t('Advance next reset time')}
         />
       </label>
-    </ConfirmDialog>
+    </DangerConfirmDialog>
   )
 }

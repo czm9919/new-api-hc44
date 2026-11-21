@@ -98,6 +98,32 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 
+// 消费日志异步批量写（v1.1.0 M1 · B09）：RecordConsumeLog 在请求路径上
+// 同步写库是尾延迟来源。开启后日志先入有界队列，后台按批量/间隔落库；
+// 队列满或异步未启动时退化为同步写，保证账务日志不丢。
+var ConsumeLogAsyncEnabled = true
+var ConsumeLogQueueSize = 8192      // 有界队列容量，超出时降级同步写
+var ConsumeLogBatchSize = 100       // 单批落库条数，攒够即刷
+var ConsumeLogFlushIntervalMs = 200 // 刷盘间隔（毫秒），未攒满也按期刷
+
+// 计费异常告警（v1.1.0 M1 · B71）：扣费为 0、倍率为 0、金额为负、单请求超阈值
+// 这类账务异常必须当场暴露，不能等用户投诉或对账才发现。
+var BillingAlertEnabled = true                      // 告警通知开关（指标计数不受它控制）
+var BillingAlertSingleRequestQuota = 500 * 100000.0 // 单请求扣费超阈值告警（quota 单位），0 关闭
+var AlertNotifyMaxPerHour = 10                      // 各类告警通知按 kind 每小时最多发送条数
+
+// 基础监控告警（v1.1.0 M1 · B73）：渠道失败率 / 磁盘 / 内存。
+var MonitorAlertEnabled = true
+var MonitorAlertIntervalMinutes = 15    // 巡检周期（分钟）
+var MonitorChannelErrorRatePercent = 50 // 渠道失败率阈值（百分比）
+var MonitorChannelMinRequests = 10      // 渠道进入失败率判定的最小请求数
+var MonitorDiskUsedPercent = 90         // 磁盘告警阈值，0 关闭
+var MonitorMemoryUsedPercent = 90       // 内存告警阈值，0 关闭
+
+// 上游 usage 缺失兜底（v1.1.0 M1 · B82）：上游返回全零 token 时按预估算的
+// prompt tokens 计费，避免漏计；completion 侧不做估算（无响应文本可数）。
+var UsageFallbackEnabled = true
+
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 
@@ -165,6 +191,16 @@ var requestInterval int
 var RequestInterval time.Duration
 
 var SyncFrequency int // unit is second
+
+// OfficialPricingSyncInterval 是「官方定价」自动同步的间隔（秒）。
+// 0 表示关闭自动同步（只保留管理端手动刷新）。
+// 官方价目表本身不是秒级变化的数据，默认 6 小时足够贴近真实更新。
+var OfficialPricingSyncInterval int
+
+// OfficialPricingStaleSeconds 是排行榜「按需刷新」的触发阈值（秒）：
+// 快照比这个更旧时，下一次有人访问价格榜就顺手异步刷新一次。
+// 比自动同步间隔短，用来兜住「定时器还没到点但官方刚改了价」的场景。
+var OfficialPricingStaleSeconds int
 
 var BatchUpdateEnabled = false
 var BatchUpdateInterval int
@@ -245,6 +281,17 @@ var (
 	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
 	SearchRateLimitDuration int64 = 60
+
+	// QQ 机器人接入接口（/api/qq/agent/*）的限流。
+	//
+	// 口径和别的限流不同：调用方是 AstrBot 机器人，出口 IP 固定，一个 IP
+	// 代表整群用户，所以预算按「群规模」定而不是按「单用户」定。默认
+	// 120 次/分钟 ≈ 10 分钟绑定码 TTL 内 1200 次，够一个几百人的活跃群
+	// 连续绑定；同时把「令牌泄露后无限刷绑定接口」压成一个有上界的速率，
+	// 不会让一次泄露变成打库放大器。
+	QQAgentRateLimitEnable   bool
+	QQAgentRateLimitNum      int   = 120
+	QQAgentRateLimitDuration int64 = 60
 )
 
 var RateLimitKeyExpirationDuration = 20 * time.Minute

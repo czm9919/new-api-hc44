@@ -66,6 +66,9 @@ func TestAccessAndPanicLogsFollowLogRotation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	*common.LogDir = t.TempDir()
 	t.Cleanup(func() {
+		// Release the log file handle before the TempDir cleanup runs;
+		// Windows refuses to delete a file that is still open.
+		logger.CloseLogFile()
 		gin.SetMode(previousMode)
 		gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter
 		*common.LogDir = previousLogDir

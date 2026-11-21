@@ -689,13 +689,6 @@ func VGuardUpstreamViolation(c *gin.Context, info *relaycommon.RelayInfo, apiErr
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // ---------------- 管理接口 ----------------
 
 type VGuardStatusItem struct {

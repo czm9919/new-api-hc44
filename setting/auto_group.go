@@ -17,6 +17,10 @@ var autoGroups = []string{
 
 var DefaultUseAutoGroup = false
 
+// AutoGroupUpgradeEnabled 是「累计充值自动升级分组」（v1.1.0 M2 · B57）的总开关。
+// 关闭时充值入账后不做任何规则评估，升级全靠运营手动改，升级后默认行为不变。
+var AutoGroupUpgradeEnabled = false
+
 var maxTokenAutoGroups atomic.Int64
 
 func init() {

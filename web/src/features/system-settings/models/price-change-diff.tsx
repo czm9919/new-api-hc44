@@ -16,7 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Undo2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  AlertCircle,
+  Loader2,
+  TrendingDown,
+  TrendingUp,
+  Undo2,
+} from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -24,8 +32,14 @@ import { StaticDataTable } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { formatQuota } from '@/lib/format'
 
-import type { PricingSyncValues } from '../types'
+import { previewRatioDiff } from '../api'
+import type {
+  PricingSyncValues,
+  RatioDiffPreviewRequest,
+  RatioDiffPreviewResponse,
+} from '../types'
 import {
   getPriceChangeKind,
   hasPricingValue,
@@ -294,6 +308,144 @@ export function PriceChangeCard(props: { row: ModelRow; onUndo: () => void }) {
   )
 }
 
+/** The ratio maps the backend needs to estimate the impact of this save. */
+function collectRatioChanges(
+  rows: ModelRow[],
+  field: 'ratio' | 'completionRatio'
+): Record<string, number> {
+  const changes: Record<string, number> = {}
+  for (const row of rows) {
+    const before = row.saved?.[field] ?? ''
+    const after = row.draft?.[field] ?? ''
+    if (before === after) continue
+    // A cleared ratio means the model is billed at zero from now on.
+    const next = hasPricingValue(after) ? Number(after) : 0
+    changes[row.name] = Number.isFinite(next) ? next : 0
+  }
+  return changes
+}
+
+const RATIO_TYPE_LABELS = {
+  model: 'Model ratio',
+  completion: 'Completion ratio',
+  group: 'Group ratios',
+} as const
+
+/**
+ * v1.1.0 M1 · B22：保存前的倍率影响面预览。后端按近 7 天用量线性外推
+ * 新旧倍率差额，这里只做展示，失败不影响保存流程。
+ */
+function RatioDiffEstimate(props: {
+  modelChanges: Record<string, number>
+  completionChanges: Record<string, number>
+}) {
+  const { t } = useTranslation()
+  const requests = useMemo(() => {
+    const list: RatioDiffPreviewRequest[] = []
+    if (Object.keys(props.modelChanges).length > 0) {
+      list.push({ ratio_type: 'model', new_ratio: props.modelChanges })
+    }
+    if (Object.keys(props.completionChanges).length > 0) {
+      list.push({
+        ratio_type: 'completion',
+        new_ratio: props.completionChanges,
+      })
+    }
+    return list
+  }, [props.modelChanges, props.completionChanges])
+
+  const previewQuery = useQuery({
+    queryKey: ['ratio-diff-preview', requests],
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const responses = await Promise.all(
+        requests.map((request) => previewRatioDiff(request))
+      )
+      for (const response of responses) {
+        if (!response.success) {
+          throw new Error(response.message || 'Preview request failed')
+        }
+      }
+      return responses.map(
+        (response: RatioDiffPreviewResponse) => response.data
+      )
+    },
+  })
+
+  if (previewQuery.isLoading) {
+    return (
+      <div className='bg-muted/20 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs'>
+        <Loader2 className='size-3.5 animate-spin' aria-hidden='true' />
+        {t('Ratio Change Preview')}
+      </div>
+    )
+  }
+  if (previewQuery.isError) {
+    return (
+      <div className='text-destructive border-destructive/30 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs'>
+        <AlertCircle className='mt-0.5 size-3.5 shrink-0' aria-hidden='true' />
+        <span className='min-w-0 break-words'>
+          {t('Ratio Change Preview')}: {previewQuery.error.message}
+        </span>
+      </div>
+    )
+  }
+  const previews = previewQuery.data ?? []
+  if (previews.length === 0) return null
+  return (
+    <section
+      aria-label={t('Ratio Change Preview')}
+      className='bg-muted/20 space-y-3 rounded-lg border px-3 py-3'
+    >
+      <div className='flex items-center gap-2 text-sm font-medium'>
+        <span
+          aria-hidden='true'
+          className='size-1.5 rounded-full bg-amber-500'
+        />
+        {t('Ratio Change Preview')}
+      </div>
+      {previews.map((preview) => {
+        const delta = preview.delta_quota
+        const TrendIcon = delta < 0 ? TrendingDown : TrendingUp
+        return (
+          <div key={preview.ratio_type} className='space-y-1'>
+            <p className='text-muted-foreground text-xs leading-5'>
+              {t(RATIO_TYPE_LABELS[preview.ratio_type])}
+              {' · '}
+              {t(
+                'This change affects {{models}} of {{total}} models. Estimated 7-day impact:',
+                {
+                  models: preview.changed_models,
+                  total: preview.total_entries,
+                }
+              )}
+            </p>
+            <div className='flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm'>
+              <span className='text-muted-foreground text-xs'>
+                {t('Estimated revenue change')}
+              </span>
+              <span
+                className={`font-semibold tabular-nums ${
+                  delta < 0
+                    ? 'text-destructive'
+                    : 'text-emerald-600 dark:text-emerald-400'
+                }`}
+              >
+                <TrendIcon
+                  className='mr-1 inline size-3.5 align-[-2px]'
+                  aria-hidden='true'
+                />
+                {delta > 0 && '+'}
+                {formatQuota(delta)}
+              </span>
+            </div>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
 export function PriceChangesDialog(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -302,6 +454,17 @@ export function PriceChangesDialog(props: {
   isLoading?: boolean
 }) {
   const { t } = useTranslation()
+  const modelRatioChanges = useMemo(
+    () => collectRatioChanges(props.rows, 'ratio'),
+    [props.rows]
+  )
+  const completionRatioChanges = useMemo(
+    () => collectRatioChanges(props.rows, 'completionRatio'),
+    [props.rows]
+  )
+  const hasRatioChanges =
+    Object.keys(modelRatioChanges).length > 0 ||
+    Object.keys(completionRatioChanges).length > 0
   return (
     <ConfirmDialog
       open={props.open}
@@ -316,6 +479,12 @@ export function PriceChangesDialog(props: {
       isLoading={props.isLoading}
       handleConfirm={props.onConfirm}
     >
+      {hasRatioChanges && (
+        <RatioDiffEstimate
+          modelChanges={modelRatioChanges}
+          completionChanges={completionRatioChanges}
+        />
+      )}
       <ul className='max-h-[60dvh] divide-y overflow-y-auto rounded-lg border sm:hidden'>
         {props.rows.map((row) => {
           const kind = getPriceChangeKind(row)

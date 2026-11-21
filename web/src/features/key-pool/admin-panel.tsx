@@ -1,3 +1,12 @@
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  KeyRound,
+  RefreshCw,
+  RotateCcw,
+  Wrench,
+} from 'lucide-react'
 /*
  * 号池运营面板（管理员可见）：概览统计、号池渠道管理、号池 Token 管理。
  *
@@ -8,19 +17,16 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
-  KeyRound,
-  RefreshCw,
-  RotateCcw,
-  Wrench,
-} from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -33,7 +39,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
 import {
@@ -94,12 +99,12 @@ function OverviewCards({ data }: { data: KeyPoolOverview | null }) {
   return (
     <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
       {items.map((it) => (
-        <div key={it.label} className='rounded-lg border bg-muted/40 p-3'>
-          <div className='text-xs text-muted-foreground'>{it.label}</div>
+        <div key={it.label} className='bg-muted/40 rounded-lg border p-3'>
+          <div className='text-muted-foreground text-xs'>{it.label}</div>
           <div className='mt-1 text-lg font-semibold tabular-nums'>
             {fmtNum(it.value)}
           </div>
-          <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+          <div className='text-muted-foreground mt-0.5 truncate text-xs'>
             {it.hint}
           </div>
         </div>
@@ -170,7 +175,7 @@ function SettingsCard() {
               patch({ default_daily_gift_quota: Number(e.target.value) || 0 })
             }
           />
-          <p className='text-xs text-muted-foreground'>
+          <p className='text-muted-foreground text-xs'>
             用户贡献密钥后，每个号池 Token 每天赠送的额度；每日 00:00
             （北京时间）自动重置回该值。设为 0 则不赠送。
           </p>
@@ -191,7 +196,7 @@ function SettingsCard() {
               })
             }
           />
-          <p className='text-xs text-muted-foreground'>
+          <p className='text-muted-foreground text-xs'>
             防止用户一次自助签发大量 Token。运营侧生成号池不受此限制。
           </p>
         </div>
@@ -199,7 +204,7 @@ function SettingsCard() {
         <div className='flex items-start justify-between gap-4 rounded-lg border p-3'>
           <div className='space-y-0.5'>
             <Label className='text-sm font-medium'>开放用户自助贡献</Label>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               关闭后用户侧「贡献密钥」入口将不可用，号池只由运营在后台发放。
             </p>
           </div>
@@ -218,7 +223,7 @@ function SettingsCard() {
               patch({ free_quota_allowed_groups: e.target.value })
             }
           />
-          <p className='text-xs text-muted-foreground'>
+          <p className='text-muted-foreground text-xs'>
             签到等奖励的免费额度只在列出的分组内消耗（逗号分隔分组名，如
             号池、公益模型组的分组 key）。白名单外的分组视为「付费分组」：
             只扣付费余额、付费不足则请求失败；号池发放的免费级 key
@@ -226,10 +231,28 @@ function SettingsCard() {
           </p>
         </div>
 
+        <div className='space-y-1.5'>
+          <Label className='text-sm font-medium'>免费额度可用模型</Label>
+          <Input
+            value={settings.free_quota_allowed_models}
+            placeholder='留空表示所有模型都可用，例如：gpt-4o-mini,claude-3-*'
+            onChange={(e) =>
+              patch({ free_quota_allowed_models: e.target.value })
+            }
+          />
+          <p className='text-muted-foreground text-xs'>
+            免费额度只在列出的模型上消耗（逗号分隔，支持 <code>prefix*</code>
+            前缀通配，例如 <code>gpt-4o*</code>
+            ）。与上面的分组白名单是「同时满足」
+            关系：分组在白名单内但模型不在白名单内时，请求仍然扣付费余额；
+            两处都留空则不做任何限制。
+          </p>
+        </div>
+
         <div className='flex items-start justify-between gap-4 rounded-lg border p-3'>
           <div className='space-y-0.5'>
             <Label className='text-sm font-medium'>自动绑定上游模型列表</Label>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               开启时自动拉取上游 /v1/models 作为渠道可用模型。渠道模型是
               <strong>精确匹配</strong>（没有 * 通配），关闭后必须手填模型，
               否则任何模型都匹配不到。
@@ -243,11 +266,14 @@ function SettingsCard() {
 
         <div className='flex items-start justify-between gap-4 rounded-lg border p-3'>
           <div className='space-y-0.5'>
-            <Label className='text-sm font-medium'>单模型自动检查与自动下架</Label>
-            <p className='text-xs text-muted-foreground'>
+            <Label className='text-sm font-medium'>
+              单模型自动检查与自动下架
+            </Label>
+            <p className='text-muted-foreground text-xs'>
               开启后巡检逐个模型探测：上游明确告知「模型不存在/未授权」时自动下架该模型
               （不影响渠道和其他模型），恢复后自动重新上架。需同时开启「自动测试渠道」定时任务。
-              注意：请求数等于模型数，NVIDIA 号池 85 个模型时每轮巡检约 85 个请求。
+              注意：请求数等于模型数，NVIDIA 号池 85 个模型时每轮巡检约 85
+              个请求。
             </p>
           </div>
           <Switch
@@ -289,7 +315,9 @@ function ChannelCard({
 }) {
   const [keys, setKeys] = useState<KeyPoolKeyInfo[] | null>(null)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<KeyPoolChannelTestResult | null>(null)
+  const [testResult, setTestResult] = useState<KeyPoolChannelTestResult | null>(
+    null
+  )
 
   const loadKeys = useCallback(async () => {
     try {
@@ -345,17 +373,24 @@ function ChannelCard({
               <Badge variant={health.variant}>{health.text}</Badge>
               {channel.is_multi_key ? (
                 <Badge variant='outline'>
-                  多密钥 · {channel.multi_key_mode === 'random' ? '随机' : '轮询'}
+                  多密钥 ·{' '}
+                  {channel.multi_key_mode === 'random' ? '随机' : '轮询'}
                 </Badge>
               ) : (
                 <Badge variant='destructive'>单密钥</Badge>
               )}
             </CardTitle>
             <CardDescription className='mt-1 break-all'>
-              {channel.provider_label} · {channel.base_url} · 分组 {channel.group || 'default'}
+              {channel.provider_label} · {channel.base_url} · 分组{' '}
+              {channel.group || 'default'}
             </CardDescription>
           </div>
-          <Button variant='outline' size='sm' onClick={runTest} disabled={testing}>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={runTest}
+            disabled={testing}
+          >
             <Activity className='mr-1 h-3.5 w-3.5' />
             {testing ? '验活中…' : '一键验活'}
           </Button>
@@ -363,26 +398,26 @@ function ChannelCard({
       </CardHeader>
       <CardContent className='space-y-4'>
         <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-          <div className='rounded-lg border bg-muted/40 p-3'>
-            <div className='text-xs text-muted-foreground'>绑定模型</div>
+          <div className='bg-muted/40 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>绑定模型</div>
             <div className='mt-1 font-semibold tabular-nums'>
               {channel.model_count} 个
             </div>
           </div>
-          <div className='rounded-lg border bg-muted/40 p-3'>
-            <div className='text-xs text-muted-foreground'>上游密钥</div>
+          <div className='bg-muted/40 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>上游密钥</div>
             <div className='mt-1 font-semibold tabular-nums'>
               {channel.enabled_keys} / {channel.key_count}
             </div>
           </div>
-          <div className='rounded-lg border bg-muted/40 p-3'>
-            <div className='text-xs text-muted-foreground'>关联 Token</div>
+          <div className='bg-muted/40 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>关联 Token</div>
             <div className='mt-1 font-semibold tabular-nums'>
               {channel.token_count} 个
             </div>
           </div>
-          <div className='rounded-lg border bg-muted/40 p-3'>
-            <div className='text-xs text-muted-foreground'>剩余额度</div>
+          <div className='bg-muted/40 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>剩余额度</div>
             <div className='mt-1 font-semibold tabular-nums'>
               {fmtNum(channel.token_remain_quota)}
             </div>
@@ -394,14 +429,15 @@ function ChannelCard({
             <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0' />
             <span>
               该渠道没有绑定任何模型，而渠道模型是
-              <strong>精确匹配</strong>（没有 * 通配），任何模型请求都会报「无可用渠道」。
+              <strong>精确匹配</strong>（没有 *
+              通配），任何模型请求都会报「无可用渠道」。
               请在渠道管理里填入模型，或开启「自动绑定上游模型列表」后重新生成号池。
             </span>
           </div>
         )}
 
         {!channel.is_multi_key && channel.key_count > 1 && (
-          <div className='flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2.5 text-sm text-destructive'>
+          <div className='bg-destructive/10 text-destructive flex items-start gap-2 rounded-md px-3 py-2.5 text-sm'>
             <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0' />
             <span>
               渠道里有 {channel.key_count} 把密钥但未标记为多密钥渠道，
@@ -413,7 +449,9 @@ function ChannelCard({
 
         {keys && keys.length > 0 && (
           <div className='space-y-2'>
-            <div className='text-sm font-medium'>密钥明细（{keys.length} 把）</div>
+            <div className='text-sm font-medium'>
+              密钥明细（{keys.length} 把）
+            </div>
             <div className='space-y-1.5'>
               {keys.map((k) => (
                 <div
@@ -421,10 +459,10 @@ function ChannelCard({
                   className='flex items-center justify-between gap-3 rounded-lg border px-3 py-2'
                 >
                   <div className='flex min-w-0 items-center gap-2'>
-                    <span className='text-xs text-muted-foreground tabular-nums'>
+                    <span className='text-muted-foreground text-xs tabular-nums'>
                       #{k.index}
                     </span>
-                    <code className='truncate rounded bg-muted px-2 py-0.5 text-xs'>
+                    <code className='bg-muted truncate rounded px-2 py-0.5 text-xs'>
                       {k.key_mask}
                     </code>
                     {k.enabled ? (
@@ -451,15 +489,15 @@ function ChannelCard({
         )}
 
         {testResult && (
-          <div className='space-y-2 rounded-lg border bg-muted/30 p-3'>
+          <div className='bg-muted/30 space-y-2 rounded-lg border p-3'>
             <div className='flex items-center gap-2 text-sm font-medium'>
               {testResult.invalid_count === 0 ? (
                 <CheckCircle2 className='h-4 w-4 text-emerald-600' />
               ) : (
                 <AlertTriangle className='h-4 w-4 text-amber-600' />
               )}
-              验活结果：{testResult.valid_count} 把可用 / {testResult.invalid_count}{' '}
-              把不可用
+              验活结果：{testResult.valid_count} 把可用 /{' '}
+              {testResult.invalid_count} 把不可用
             </div>
             <ul className='space-y-1'>
               {testResult.results.map((r) => (
@@ -470,7 +508,9 @@ function ChannelCard({
                   <span className='text-muted-foreground tabular-nums'>
                     #{r.index}
                   </span>
-                  <code className='rounded bg-muted px-1.5 py-0.5'>{r.key_mask}</code>
+                  <code className='bg-muted rounded px-1.5 py-0.5'>
+                    {r.key_mask}
+                  </code>
                   <span
                     className={
                       r.valid
@@ -505,7 +545,7 @@ function ChannelsPanel({ refreshKey }: { refreshKey: number }) {
   if (channels.length === 0) {
     return (
       <Card>
-        <CardContent className='py-8 text-center text-sm text-muted-foreground'>
+        <CardContent className='text-muted-foreground py-8 text-center text-sm'>
           还没有号池渠道。用上方的「生成号池」粘贴上游密钥即可自动创建。
         </CardContent>
       </Card>
@@ -514,7 +554,11 @@ function ChannelsPanel({ refreshKey }: { refreshKey: number }) {
   return (
     <div className='space-y-4'>
       {channels.map((c) => (
-        <ChannelCard key={c.id} channel={c} onChanged={() => getKeyPoolChannels().then(setChannels)} />
+        <ChannelCard
+          key={c.id}
+          channel={c}
+          onChanged={() => getKeyPoolChannels().then(setChannels)}
+        />
       ))}
     </div>
   )
@@ -580,8 +624,17 @@ function TokensPanel() {
               }}
               className='w-48'
             />
-            <Button variant='outline' size='sm' onClick={load} disabled={loading}>
-              <RefreshCw className={loading ? 'mr-1 h-3.5 w-3.5 animate-spin' : 'mr-1 h-3.5 w-3.5'} />
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={load}
+              disabled={loading}
+            >
+              <RefreshCw
+                className={
+                  loading ? 'mr-1 h-3.5 w-3.5 animate-spin' : 'mr-1 h-3.5 w-3.5'
+                }
+              />
               刷新
             </Button>
           </div>
@@ -589,7 +642,7 @@ function TokensPanel() {
       </CardHeader>
       <CardContent className='space-y-3'>
         {rows.length === 0 ? (
-          <div className='py-8 text-center text-sm text-muted-foreground'>
+          <div className='text-muted-foreground py-8 text-center text-sm'>
             {loading ? '加载中…' : '暂无号池 Token'}
           </div>
         ) : (
@@ -611,16 +664,20 @@ function TokensPanel() {
                 {rows.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className='tabular-nums'>{t.id}</TableCell>
-                    <TableCell className='max-w-40 truncate'>{t.name}</TableCell>
+                    <TableCell className='max-w-40 truncate'>
+                      {t.name}
+                    </TableCell>
                     <TableCell className='max-w-32 truncate'>
                       {t.username || `用户 ${t.user_id}`}
                     </TableCell>
                     <TableCell>
-                      <code className='rounded bg-muted px-1.5 py-0.5 text-xs'>
+                      <code className='bg-muted rounded px-1.5 py-0.5 text-xs'>
                         {t.key_mask}
                       </code>
                     </TableCell>
-                    <TableCell>{t.provider_label || t.provider || '-'}</TableCell>
+                    <TableCell>
+                      {t.provider_label || t.provider || '-'}
+                    </TableCell>
                     <TableCell className='text-right tabular-nums'>
                       {fmtNum(t.daily_gift_quota)}
                     </TableCell>
@@ -663,7 +720,7 @@ function TokensPanel() {
             >
               上一页
             </Button>
-            <span className='text-xs text-muted-foreground'>
+            <span className='text-muted-foreground text-xs'>
               第 {page} / {totalPages} 页
             </span>
             <Button
