@@ -86,8 +86,12 @@ type UserAccelSub struct {
 	TotalCharged  int64 `json:"total_charged" gorm:"bigint;not null;default:0"`
 	// LastChargeError 最近一次续费失败原因（如余额不足），给用户看的那一句话。
 	LastChargeError string `json:"last_charge_error" gorm:"type:varchar(255);default:''"`
-	CreatedAt       int64  `json:"created_at" gorm:"bigint;not null"`
-	UpdatedAt       int64  `json:"updated_at" gorm:"bigint;not null"`
+	// AccessPrefix 路径水印前缀（hc52）：8 位 hex，HMAC(站点盐, userId) 截断，
+	// 订阅生成时写回一次后永不改变。加速域名下的请求必须以 /<prefix>/ 开头
+	// 且令牌对应用户一致，泄露的前缀本身就是溯源水印（一人一前缀）。
+	AccessPrefix string `json:"access_prefix" gorm:"type:varchar(16);default:''"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint;not null"`
+	UpdatedAt    int64  `json:"updated_at" gorm:"bigint;not null"`
 }
 
 func (UserAccelSub) TableName() string {
@@ -207,6 +211,20 @@ func GetUserAccelSub(userId int) (*UserAccelSub, error) {
 		return nil, err
 	}
 	sub.FillPriceUSD()
+	return &sub, nil
+}
+
+// GetUserAccelSubByPrefix 按水印前缀反查订阅（hc52 守卫用）。
+// 只认 active 状态：订阅被撤销后前缀立刻失效，不用等过期时间。
+func GetUserAccelSubByPrefix(prefix string) (*UserAccelSub, error) {
+	var sub UserAccelSub
+	err := DB.Where("access_prefix = ? AND status = ?", prefix, AccelSubStatusActive).First(&sub).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	return &sub, nil
 }
 

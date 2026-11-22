@@ -16,9 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+
+import { getAccelOverview } from '@/features/accel/api'
+import { IngressCard } from '@/features/accel/ingress-card'
 
 import { ApiKeysDialogs } from './components/api-keys-dialogs'
 import { ApiKeysPrimaryButtons } from './components/api-keys-primary-buttons'
@@ -27,6 +31,14 @@ import { ApiKeysTable } from './components/api-keys-table'
 
 export function ApiKeys() {
   const { t } = useTranslation()
+  // 加速接入卡片（hc52）：开通加速订阅的用户在令牌页也能直接拿到
+  // 加速地址，不用再跑一趟加速页。后端只对有生效订阅的用户下发地址，
+  // 没订阅时 locked 态渲染订阅引导，没配置 ingress_host 时返回 null 不渲染。
+  const { data } = useQuery({
+    queryKey: ['accel'],
+    queryFn: getAccelOverview,
+    refetchInterval: 60000,
+  })
   return (
     <ApiKeysProvider>
       <SectionPageLayout fixedContent>
@@ -35,6 +47,7 @@ export function ApiKeys() {
           <ApiKeysPrimaryButtons />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
+          {data?.ingress ? <IngressCard ingress={data.ingress} /> : null}
           <ApiKeysTable />
         </SectionPageLayout.Content>
       </SectionPageLayout>

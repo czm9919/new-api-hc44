@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -49,11 +50,13 @@ type accelLimitsView struct {
 	MaxExtendDays  int     `json:"max_extend_days"`
 }
 
-// accelIngressView 入站加速接入信息。Host 为空表示管理员还没配 DCDN 域名，
+// accelIngressView 入站加速接入信息。Host 为空表示管理员还没配加速域名，
 // 前端应整块隐藏而不是显示一个空地址；Locked=true 表示已配置但该用户没有
-// 生效订阅——域名是付费门槛（hc51 守卫会拦无订阅请求），所以不下发地址。
+// 生效订阅——域名是付费门槛（hc52 守卫会拦无订阅/前缀不匹配的请求），
+// 所以不下发地址。BaseURL 带个人水印前缀（hc52），一人一份、泄露可溯源。
 type accelIngressView struct {
 	Host    string `json:"host"`
+	Prefix  string `json:"prefix"`
 	BaseURL string `json:"base_url"`
 	Example string `json:"example"`
 	Locked  bool   `json:"locked"`
@@ -77,10 +80,10 @@ type accelUserView struct {
 	ServerTime  int64  `json:"server_time"`
 }
 
-// buildAccelIngress 把配置的域名拼成可直接粘贴的接入地址。
+// buildAccelIngress 把配置的域名拼成可直接粘贴的接入地址（带个人水印前缀）。
 // 允许管理员填带协议头的写法（https://accel.example.com/），这里统一归一化，
 // 否则前端拼出来的示例会出现 https://https:// 这种低级错误。
-func buildAccelIngress(host string) accelIngressView {
+func buildAccelIngress(host string, prefix string) accelIngressView {
 	cleaned := strings.TrimSpace(host)
 	if cleaned == "" {
 		return accelIngressView{}
@@ -92,8 +95,14 @@ func buildAccelIngress(host string) accelIngressView {
 		return accelIngressView{}
 	}
 	baseURL := "https://" + cleaned
+	if prefix != "" {
+		// hc52：路径水印前缀。SDK 会把它当 base_url 的路径部分拼进请求，
+		// 服务端 rewrite 剥掉后走正常 relay 链路。
+		baseURL += "/" + prefix
+	}
 	return accelIngressView{
 		Host:    cleaned,
+		Prefix:  prefix,
 		BaseURL: baseURL,
 		Example: "curl " + baseURL + "/v1/chat/completions \\\n" +
 			"  -H \"Authorization: Bearer sk-xxx\" \\\n" +
@@ -192,9 +201,14 @@ func GetAccelOverview(c *gin.Context) {
 	}
 	// 接入地址只发给有生效订阅的用户（hc51）：域名本身是付费门槛，
 	// 守卫会拦无订阅请求，但页面也不该把地址白送出去让人试。
+	// hc52：地址带个人水印前缀，惰性生成（存量订阅首次查看时补写）。
 	ingress := accelIngressView{}
 	if sub != nil && sub.Active(time.Now().Unix()) {
-		ingress = buildAccelIngress(operation_setting.GetAccelSetting().IngressHost)
+		prefix, prefixErr := service.EnsureAccelAccessPrefix(userId)
+		if prefixErr != nil {
+			common.SysError(common.LogText("accel: ensure access prefix failed for user %d: %s", userId, prefixErr.Error()))
+		}
+		ingress = buildAccelIngress(operation_setting.GetAccelSetting().IngressHost, prefix)
 	} else if operation_setting.GetAccelSetting().IngressHost != "" {
 		ingress = accelIngressView{Locked: true}
 	}
@@ -580,4 +594,18 @@ func parseAccelIdParam(c *gin.Context, name string) (int, error) {
 		return 0, errors.New("invalid id")
 	}
 	return id, nil
+}
+
+// GetAccelIngressStats 加速域名守卫计数（hc52 · 管理端）。
+// 拦截数突增 ≈ 域名或前缀被传播出去被人试了，此时考虑轮换域名。
+func GetAccelIngressStats(c *gin.Context) {
+	allowed, denied := middleware.AccelIngressStats()
+	common.ApiSuccess(c, gin.H{
+		"allowed":       allowed,
+		"denied":        denied,
+		"ingress_host":  operation_setting.GetAccelSetting().IngressHost,
+		"global_limit":  operation_setting.GetAccelSetting().GlobalConcurrency,
+		"slot_backend":  service.AccelSlotBackend(),
+		"server_time":   time.Now().Unix(),
+	})
 }

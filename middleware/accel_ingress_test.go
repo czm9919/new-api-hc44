@@ -79,3 +79,69 @@ func TestNormalizeIngressHost(t *testing.T) {
 		}
 	}
 }
+
+// 水印前缀剥离（hc52）：只认「8 位 hex + 紧跟斜杠」的形态。
+// 非 hex 段（/dashboard 等）和不足 8 位（/v1、/ab12）都不能误剥，
+// 否则加速域名下的普通路径会被错误重写。
+func TestSplitAccelPrefix(t *testing.T) {
+	cases := []struct {
+		path      string
+		wantPfx   string
+		wantRest  string
+		wantMatch bool
+	}{
+		{path: "/a3f2b91c/v1/chat/completions", wantPfx: "a3f2b91c", wantRest: "/v1/chat/completions", wantMatch: true},
+		{path: "/00000000/", wantPfx: "00000000", wantRest: "/", wantMatch: true},
+		{path: "/A3F2B91C/v1/models", wantPfx: "A3F2B91C", wantRest: "/v1/models", wantMatch: true},
+		{path: "/a3f2b91c/", wantPfx: "a3f2b91c", wantRest: "/", wantMatch: true},
+		// 不命中的形态：原样返回路径（pfx 为空串）。
+		{path: "/v1/chat/completions", wantPfx: "", wantRest: "/v1/chat/completions", wantMatch: false}, // 太短
+		{path: "/a3f2b91/v1", wantPfx: "", wantRest: "/a3f2b91/v1", wantMatch: false},                   // 7 位
+		{path: "/a3f2b91cx/v1", wantPfx: "", wantRest: "/a3f2b91cx/v1", wantMatch: false},               // 第 8 位后不是斜杠
+		{path: "/dashboar/v1", wantPfx: "", wantRest: "/dashboar/v1", wantMatch: false},                 // 非 hex
+		{path: "/a3f2b91c", wantPfx: "", wantRest: "/a3f2b91c", wantMatch: false},                       // 不足 10 字符（无尾斜杠）
+	}
+	for _, tc := range cases {
+		pfx, rest, ok := splitAccelPrefix(tc.path)
+		if ok != tc.wantMatch || pfx != tc.wantPfx || rest != tc.wantRest {
+			t.Fatalf("splitAccelPrefix(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.path, pfx, rest, ok, tc.wantPfx, tc.wantRest, tc.wantMatch)
+		}
+	}
+}
+
+// rewrite 层的行为边界：主域名永不剥前缀；加速域名 + 带前缀 → 重路由后
+// 到达处理器时路径已剥掉前缀、ctx 里带原始前缀。
+func TestAccelIngressRewrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	operation_setting.GetAccelSetting().IngressHost = "accel.example.com"
+	defer func() { operation_setting.GetAccelSetting().IngressHost = "" }()
+
+	r := gin.New()
+	r.Use(AccelIngressRewrite(r))
+	r.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.String(http.StatusOK, "prefix=%s path=%s",
+			accelPrefixOf(c), c.Request.URL.Path)
+	})
+
+	// 主域名：即使路径形如 /<prefix>/v1/... 也不剥（落到 404，由前端路由处理）。
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/a3f2b91c/v1/chat/completions", nil)
+	req.Host = "api.example.com"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("main host must not strip prefix, got status %d", w.Code)
+	}
+
+	// 加速域名：剥前缀 → 重新路由命中 /v1 处理器，ctx 保留原始前缀。
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/a3f2b91c/v1/chat/completions", nil)
+	req.Host = "accel.example.com"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("accel host with prefix must rewrite to handler, got status %d", w.Code)
+	}
+	if w.Body.String() != "prefix=a3f2b91c path=/v1/chat/completions" {
+		t.Fatalf("unexpected rewritten request: %s", w.Body.String())
+	}
+}

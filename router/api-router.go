@@ -250,7 +250,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/accel/plans/:id", controller.AdminUpdateAccelPlan)
 				adminRoute.DELETE("/accel/plans/:id", controller.AdminDeleteAccelPlan)
 				adminRoute.GET("/accel/subscriptions", controller.AdminListAccelSubs)
-				// 线路查询与用户端共用 /accel/lines：带 ?group= 时要求管理员角色，
+				// 守卫放行/拦截计数（hc52）：拦截突增说明域名被传播。
+				adminRoute.GET("/accel/ingress/stats", controller.GetAccelIngressStats)				// 线路查询与用户端共用 /accel/lines：带 ?group= 时要求管理员角色，
 				// 单独开一条 admin 路由会和 selfRoute 撞同一个 path+method。
 				adminRoute.POST("/accel/subscriptions/extend", controller.AdminExtendAccelSub)
 				adminRoute.POST("/accel/subscriptions/revoke", controller.AdminRevokeAccelSub)

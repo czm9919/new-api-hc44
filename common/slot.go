@@ -23,16 +23,26 @@ import (
 // 调用方负责在 Redis 不可用时降级到进程内计数（见 service.AcquireAccelSlot）。
 
 // slotReserveScript 原子占位：返回 1 表示拿到槽位，0 表示已满。
+// 每次成功占位都刷新 TTL（hc52）：活跃流量下计数键不会在半路过期，
+// 避免「键提前消失 → 计数清零 → 并发上限失效」。
 var slotReserveScript = redis.NewScript(`
 local cur = redis.call('INCR', KEYS[1])
-if cur == 1 then
-  redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
 if cur > tonumber(ARGV[1]) then
   redis.call('DECR', KEYS[1])
   return 0
 end
 return 1
+`)
+
+// slotRenewScript 续期：只在键存在时刷新 TTL。返回 1 表示键还在，
+// 0 表示键已消失（极端情况下整个计数器被逐出），调用方可据此放弃续期。
+var slotRenewScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  return 1
+end
+return 0
 `)
 
 // slotReleaseScript 原子释放：减到 0 或以下直接删键，避免残留空计数器占内存。
@@ -83,6 +93,26 @@ func RedisReleaseSlot(key string) error {
 		return redis.ErrClosed
 	}
 	return slotReleaseScript.Run(context.Background(), RDB, []string{key}).Err()
+}
+
+// RedisRenewSlot 刷新槽位键的 TTL（hc52）。用于长流式请求的周期续期：
+// TTL 是僵尸槽位兜底，默认远短于长流式输出的时长，不续期的话键会在
+// 请求进行中被回收、计数清零，并发上限随之失效。
+// 返回 (renewed, err)：renewed=false 且 err=nil 表示键已不存在，
+// 续期 goroutine 应当退出。
+func RedisRenewSlot(key string, ttl time.Duration) (bool, error) {
+	if !RedisSlotAvailable() {
+		return false, redis.ErrClosed
+	}
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	res, err := slotRenewScript.Run(context.Background(), RDB,
+		[]string{key}, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, err
+	}
+	return res == 1, nil
 }
 
 // SlotKey 拼一个带业务前缀的槽位键，顺便把分隔符替换掉，

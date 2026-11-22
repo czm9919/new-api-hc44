@@ -89,6 +89,7 @@ import {
   extendAccelSub,
   getAccelLines,
   getAccelOverview,
+  getAccelIngressStats,
   listAccelLines,
   listAccelPlans,
   listAccelSubs,
@@ -96,7 +97,6 @@ import {
   setAccelAutoRenew,
   subscribeAccel,
   updateAccelPlan,
-  type AccelIngress,
   type AccelLimits,
   type AccelLine,
   type AccelLinesResponse,
@@ -106,6 +106,7 @@ import {
   type AccelSubRow,
   type AccelUsage,
 } from './api'
+import { IngressCard } from './ingress-card'
 
 const DEFAULT_LIMITS: AccelLimits = {
   max_price_usd: 200,
@@ -733,6 +734,13 @@ function AdminSubsSection() {
     queryFn: () => listAccelSubs(page, 20),
   })
 
+  // 守卫计数（hc52）：拦截数突增 ≈ 域名/前缀被传播出去被人试了。
+  const { data: ingressStats } = useQuery({
+    queryKey: ['accel-ingress-stats'],
+    queryFn: getAccelIngressStats,
+    refetchInterval: 60000,
+  })
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['accel-admin-subs'] })
     void queryClient.invalidateQueries({ queryKey: ['accel'] })
@@ -781,9 +789,19 @@ function AdminSubsSection() {
             )}
           </CardDescription>
         </div>
-        <Badge variant='outline'>
-          {t('{{count}} total', { count: total })}
-        </Badge>
+        <div className='flex flex-wrap items-center gap-2'>
+          {ingressStats && ingressStats.ingress_host ? (
+            <Badge variant='outline' title={ingressStats.ingress_host}>
+              {t('Guard: {{allowed}} allowed / {{denied}} denied', {
+                allowed: ingressStats.allowed,
+                denied: ingressStats.denied,
+              })}
+            </Badge>
+          ) : null}
+          <Badge variant='outline'>
+            {t('{{count}} total', { count: total })}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className='space-y-2'>
         {isLoading ? <Skeleton className='h-20 w-full' /> : null}
@@ -953,69 +971,6 @@ function UsageGuide({ group }: { group: string }) {
         <div className='flex items-center gap-2 text-sm'>
           {t('Group')}: <GroupChip group={group} />
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// ---------------------------------------------------------------- 入站加速地址
-//
-// 入站加速（DCDN）在基础设施侧配置，代码侧唯一能做的是把「该用哪个域名」
-// 明确告诉用户。管理员没填 ingress_host 时整块不渲染，不留空壳。
-function IngressCard({ ingress }: { ingress: AccelIngress }) {
-  const { t } = useTranslation()
-  const { copyToClipboard } = useCopyToClipboard()
-  // 未订阅：域名不下发（locked），只提示订阅后可用。
-  if (ingress.locked && !ingress.host) {
-    return (
-      <Card>
-        <CardHeader className='gap-1'>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <Zap className='size-4' />
-            {t('Accelerated entry point')}
-          </CardTitle>
-          <CardDescription>
-            {t(
-              'Subscribe to an acceleration plan to unlock the accelerated entry point.'
-            )}
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    )
-  }
-  if (!ingress.host) {
-    return null
-  }
-  return (
-    <Card>
-      <CardHeader className='gap-1'>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <Zap className='size-4' />
-          {t('Accelerated entry point')}
-        </CardTitle>
-        <CardDescription>
-          {t(
-            'Use this domain instead of the default one to get inbound acceleration. It is the same API, only the host changes.'
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='flex flex-wrap items-center gap-2'>
-          <code className='bg-muted rounded px-2 py-1 text-sm'>
-            {ingress.base_url}
-          </code>
-          <Button
-            size='sm'
-            variant='outline'
-            onClick={() => void copyToClipboard(ingress.base_url)}
-          >
-            <Copy className='mr-1 size-3.5' />
-            {t('Copy')}
-          </Button>
-        </div>
-        <pre className='bg-muted text-muted-foreground overflow-x-auto rounded p-3 text-xs'>
-          {ingress.example}
-        </pre>
       </CardContent>
     </Card>
   )

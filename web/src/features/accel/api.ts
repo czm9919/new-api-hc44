@@ -87,6 +87,8 @@ export interface AccelSubscription {
 /** 入站加速接入地址（hc50）。host 为空表示管理员还没配，整块隐藏。 */
 export interface AccelIngress {
   host: string
+  /** hc52：个人水印前缀（8 位 hex），一人一份、泄露可溯源。订阅生效后才有。 */
+  prefix?: string
   base_url: string
   /** 可直接粘贴的 curl 示例。 */
   example: string
@@ -287,5 +289,19 @@ export async function getAccelLines(): Promise<AccelLinesResponse> {
 /** 管理端：按分组看全部线路（含已禁用）。 */
 export async function listAccelLines(group: string): Promise<AccelLinesResponse> {
   const res = await api.get('/api/user/accel/lines', { params: { group } })
+  return requireServerSuccess(res.data)?.data
+}
+
+/** 管理端：加速域名守卫计数（hc52）。拦截数突增说明域名被传播。 */
+export interface AccelIngressStats {
+  allowed: number
+  denied: number
+  ingress_host: string
+  global_limit: number
+  slot_backend: string
+}
+
+export async function getAccelIngressStats(): Promise<AccelIngressStats> {
+  const res = await api.get('/api/user/accel/ingress/stats')
   return requireServerSuccess(res.data)?.data
 }

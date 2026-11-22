@@ -71,9 +71,11 @@ var (
 	accelGroupsMu     sync.RWMutex
 	accelGroups       = map[string]*model.AccelPlan{}
 	accelGroupsLoaded bool
-	// renewMu 串行化惰性续费：同一时刻多个请求同时发现订阅过期时，
-	// 只有第一个真正扣费，其余直接读它写好的结果。
-	renewMu sync.Mutex
+	// renewLocks 按用户分锁的惰性续费互斥（hc52）。
+	// hc51 及之前是一把全局锁：A 用户扣费慢（DB 抖动）会把其他所有到期用户
+	// 的续费一起堵住。改成每个用户一把锁后，同一用户的并发请求仍然只有一个
+	// 真正扣费，其余读它写好的结果；不同用户之间完全并行。
+	renewLocks sync.Map // map[int]*sync.Mutex
 	// inflight 记录每个用户当前在途的加速请求数（进程内计数）。
 	// hc50 起优先走 Redis 原子槽位（多实例共享上限）；Redis 未配置或报错时
 	// 降级到这里，保证缓存故障不会把付费用户挡在门外。
@@ -155,8 +157,9 @@ func GetActiveSubscription(userId int) (*model.UserAccelSub, error) {
 // renewExpiredSubscription 处理「到期」这一瞬间，返回续期后的订阅；
 // 返回 nil 表示已失效。
 func renewExpiredSubscription(userId int, now int64) (*model.UserAccelSub, error) {
-	renewMu.Lock()
-	defer renewMu.Unlock()
+	mu, _ := renewLocks.LoadOrStore(userId, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 
 	// 加锁后重读，避免并发请求各自扣一次月费。
 	sub, err := model.GetUserAccelSub(userId)
@@ -310,11 +313,13 @@ func SubscribeAccelPlan(userId, planId int, allowSwitch bool) (*model.UserAccelS
 			Status:        model.AccelSubStatusActive,
 			LastChargedAt: now,
 			TotalCharged:  plan.PricePerMonth,
+			AccessPrefix:  GenerateAccelAccessPrefix(userId), // hc52：开通即定前缀，一人一份
 		}
 		if err := model.CreateUserAccelSub(sub); err != nil {
 			refundAccelCharge(userId, plan.PricePerMonth)
 			return nil, err
 		}
+		accelPrefixCacheSet(sub.AccessPrefix, userId, true)
 		InvalidateAccelCache(userId)
 		sub.FillPriceUSD()
 		return sub, nil
@@ -338,6 +343,10 @@ func SubscribeAccelPlan(userId, planId int, allowSwitch bool) (*model.UserAccelS
 		return nil, err
 	}
 	InvalidateAccelCache(userId)
+	if existing.AccessPrefix != "" {
+		// hc52：重新开通后前缀反查缓存标回正向（撤销时曾被标负）。
+		accelPrefixCacheSet(existing.AccessPrefix, userId, true)
+	}
 	existing.PlanId = plan.Id
 	existing.GroupName = plan.GroupName
 	existing.PricePerMonth = plan.PricePerMonth
@@ -435,7 +444,48 @@ func RevokeAccelSubscription(userId int, reason string) error {
 		return err
 	}
 	InvalidateAccelCache(userId)
+	RevokeAccelPrefixCache(userId) // hc52：前缀反查缓存同步失效，封禁即时生效
 	return nil
+}
+
+// redisSlotRelease 返回 Redis 槽位的释放函数（hc52）。
+//
+// 释放前会先停掉续期 goroutine。续期解决的问题是：TTL 是僵尸槽位兜底，
+// 默认 10 分钟远短于长流式输出的时长——键在请求进行中被回收后计数清零，
+// 其他请求就能绕过并发上限（hc51 及之前的真实缺陷）。
+// 续期周期取 TTL/3：单个续期失败不影响请求（TTL 还有 2/3 余量），
+// 连续失败或键已消失就退出；release 里的 sync.Once 保证只停一次。
+func redisSlotRelease(key string, ttl time.Duration) func() {
+	var once sync.Once
+	stop := make(chan struct{})
+	go func() {
+		interval := ttl / 3
+		if interval < time.Second {
+			interval = time.Second
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				renewed, err := common.RedisRenewSlot(key, ttl)
+				if err != nil || !renewed {
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(stop)
+			if relErr := common.RedisReleaseSlot(key); relErr != nil {
+				// 释放失败不阻断请求：TTL 兜底会把僵尸槽位自然收回。
+				common.SysError(common.LogText("accel slot: redis release failed: %s", relErr.Error()))
+			}
+		})
+	}
 }
 
 // AccelSlotBackend 当前生效的并发计数后端：`redis` 表示多实例共享上限，
@@ -483,15 +533,7 @@ func AcquireAccelSlot(userId int, limit int) (func(), bool) {
 			if !ok {
 				return nil, false
 			}
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					if relErr := common.RedisReleaseSlot(accelSlotKey(userId)); relErr != nil {
-						// 释放失败不阻断请求：TTL 兜底会把僵尸槽位自然收回。
-						common.SysError(common.LogText("accel slot: redis release failed: %s", relErr.Error()))
-					}
-				})
-			}, true
+			return redisSlotRelease(accelSlotKey(userId), accelSlotTTL()), true
 		}
 		warnAccelSlotFallback(err)
 	}
@@ -502,6 +544,49 @@ func AcquireAccelSlot(userId int, limit int) (func(), bool) {
 	} else {
 		fresh := new(int64)
 		actual, _ := inflight.LoadOrStore(userId, fresh)
+		counter = actual.(*int64)
+	}
+	if atomic.AddInt64(counter, 1) > int64(limit) {
+		atomic.AddInt64(counter, -1)
+		return nil, false
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() { atomic.AddInt64(counter, -1) })
+	}, true
+}
+
+// accelGlobalSlotKey 全局并发槽位键：所有订阅用户共享一个计数器。
+func accelGlobalSlotKey() string {
+	return common.SlotKey("accel:global:slot")
+}
+
+// AcquireGlobalAccelSlot 加速域名全局并发槽位（hc52 · 泄露兜底）。
+//
+// 与单用户槽位（AcquireAccelSlot）分层：单用户防一个人打满，
+// 全局防「域名被传播后被大量白嫖请求打穿上游」。超限直接拒绝，
+// 损失封顶。Redis 与本地计数两条后端，语义与单用户槽位一致：
+// Redis 抖动降级本地，宁可放宽也不把付费用户全挡在门外。
+func AcquireGlobalAccelSlot(limit int) (func(), bool) {
+	if limit <= 0 {
+		return func() {}, true
+	}
+	if common.RedisSlotAvailable() {
+		ok, err := common.RedisReserveSlot(accelGlobalSlotKey(), limit, accelSlotTTL())
+		if err == nil {
+			if !ok {
+				return nil, false
+			}
+			return redisSlotRelease(accelGlobalSlotKey(), accelSlotTTL()), true
+		}
+		warnAccelSlotFallback(err)
+	}
+	var counter *int64
+	if v, ok := inflight.Load(-1); ok {
+		counter = v.(*int64)
+	} else {
+		fresh := new(int64)
+		actual, _ := inflight.LoadOrStore(-1, fresh)
 		counter = actual.(*int64)
 	}
 	if atomic.AddInt64(counter, 1) > int64(limit) {

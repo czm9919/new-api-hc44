@@ -12,11 +12,16 @@ import "github.com/QuantumNous/new-api/setting/config"
 //     release，只能靠 TTL 回收；正常请求远短于它，调小反而更安全。
 //   - LineDisplayEnabled：线路健康（成功率为进程内 EWMA）在重启后会冷启动，
 //     不想让用户看到「0%」时可以整体关掉展示，只留管理端可见。
+//   - GlobalConcurrency（hc52）：加速域名下的全局并发上限（所有订阅用户共享）。
+//     这是泄露兜底：就算域名/前缀被传播滥用，损失也被封顶——超限直接 429。
+//     0 表示不限。上限是并发数不是 QPS，和单用户槽位（AccelPlan.Concurrency）
+//     是两层：单用户防一个人打满，全局防整体被打穿。
 type AccelSetting struct {
 	IngressHost        string `json:"ingress_host"`         // 入站加速域名，如 accel.example.com；空表示不展示
 	SlotTTLSeconds     int    `json:"slot_ttl_seconds"`     // Redis 槽位兜底 TTL，默认 600
 	LineDisplayEnabled bool   `json:"line_display_enabled"` // 用户端是否展示线路状态
 	LineDegradedRate   int    `json:"line_degraded_rate"`   // 成功率低于该百分比视为异常线路，默认 50
+	GlobalConcurrency  int    `json:"global_concurrency"`   // 加速域名全局并发上限，0 不限
 }
 
 var accelSetting = AccelSetting{
@@ -24,6 +29,7 @@ var accelSetting = AccelSetting{
 	SlotTTLSeconds:     600,
 	LineDisplayEnabled: true,
 	LineDegradedRate:   50,
+	GlobalConcurrency:  0,
 }
 
 func init() {

@@ -245,6 +245,10 @@ func main() {
 		common.FatalLog(common.LogText("failed to configure trusted proxies: %s", err.Error()))
 		return
 	}
+	// 加速域名水印前缀重路由（hc52）：必须挂在所有全局中间件之前。
+	// 命中加速域名且带前缀时，剥前缀后 HandleContext 重走完整链条；
+	// 未命中的请求直接透传，其余中间件只会执行一次。
+	server.Use(middleware.AccelIngressRewrite(server))
 	server.Use(middleware.PanicRecover())
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))

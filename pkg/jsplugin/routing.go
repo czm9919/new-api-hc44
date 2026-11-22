@@ -496,6 +496,15 @@ var reservedRouteNamespaces = []string{
 	"/usage-logs",
 	"/users",
 	"/wallet",
+	// hc48~hc50 期间新增的 console 页面，补进保留名单（此前测试一直红着）。
+	"/accel",
+	"/channel-health",
+	"/consumption-rank",
+	"/cost-insight",
+	"/lottery",
+	"/notifications",
+	"/security-overview",
+	"/token-risk",
 }
 
 func (g *RoutingGeneration) Get(key string) (*LoadedPlugin, bool) {

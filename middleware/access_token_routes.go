@@ -137,6 +137,23 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PUT /api/user/invoice_profile/:id":    accessTokenScopeRule("wallet:write"),
 	"DELETE /api/user/invoice_profile/:id": accessTokenScopeRule("wallet:write"),
 
+	// 加速专线（hc48~hc52）：订阅/套餐/线路归属钱包域；线路状态只读；
+	// 管理端套餐 CRUD 与订阅管理按 option/user 权限归口。
+	// GET /api/rankings/users 消费排行榜是公开只读数据，走 any。
+	"GET /api/user/accel":                          accessTokenScopeRule("wallet:read"),
+	"POST /api/user/accel/subscribe":               accessTokenScopeRule("wallet:write"),
+	"POST /api/user/accel/auto_renew":              accessTokenScopeRule("wallet:write"),
+	"GET /api/user/accel/lines":                    accessTokenAnyRule,
+	"GET /api/user/accel/plans":                    accessTokenAnyRule,
+	"POST /api/user/accel/plans":                   accessTokenScopeRule("option:write"),
+	"PUT /api/user/accel/plans/:id":                accessTokenScopeRule("option:write"),
+	"DELETE /api/user/accel/plans/:id":             accessTokenScopeRule("option:write"),
+	"GET /api/user/accel/subscriptions":            accessTokenScopeRule("user:read"),
+	"POST /api/user/accel/subscriptions/extend":    accessTokenScopeRule("user:write"),
+	"POST /api/user/accel/subscriptions/revoke":    accessTokenScopeRule("user:write"),
+	"GET /api/user/accel/ingress/stats":            accessTokenScopeRule("option:read"),
+	"GET /api/rankings/users":                      accessTokenAnyRule,
+
 	// router/api-router.go: /api/user (admin)
 	"GET /api/user/":                   accessTokenScopeRule("user:read"),
 	"GET /api/user/topup":              accessTokenScopeRule("billing:read"),
