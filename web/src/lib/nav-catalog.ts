@@ -230,6 +230,14 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         url: '/accel',
         icon: PlugZap,
       },
+      {
+        // hc47 用户消耗排行榜：匿名可看榜（用户名打码），登录显示自己的排名。
+        // hc51 补侧边栏入口——页面和 API 早就有了，只是从没挂进导航。
+        id: 'personal.rankings',
+        titleKey: 'Rankings',
+        url: '/rankings',
+        icon: Trophy,
+      },
     ],
   },
   {

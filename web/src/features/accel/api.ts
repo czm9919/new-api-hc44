@@ -88,8 +88,10 @@ export interface AccelSubscription {
 export interface AccelIngress {
   host: string
   base_url: string
-  /** 可直接粘贴的 curl 示例，含 group 参数。 */
+  /** 可直接粘贴的 curl 示例。 */
   example: string
+  /** hc51：已配置加速域名但当前用户没有生效订阅——地址不下发，前端展示订阅引导。 */
+  locked?: boolean
 }
 
 export interface AccelOverview {

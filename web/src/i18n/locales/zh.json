@@ -8259,6 +8259,7 @@
     "Lines in group {{group}}": "「{{group}}」分组的线路",
     "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.": "绑定到该分组的渠道（含已停用）。出口地址与密钥不会对外暴露。",
     "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.": "并发当前在进程内计数：多实例部署时每个实例都会各放一份上限。配置 Redis 后可共享同一配额。",
-    "{{count}} in flight": "{{count}} 个在途"
+    "{{count}} in flight": "{{count}} 个在途",
+    "Subscribe to an acceleration plan to unlock the accelerated entry point.": "订阅加速套餐后即可解锁加速接入地址。"
   }
 }

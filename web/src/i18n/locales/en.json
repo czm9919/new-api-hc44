@@ -8225,6 +8225,7 @@
     "Lines in group {{group}}": "Lines in group {{group}}",
     "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.": "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.",
     "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.": "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.",
-    "{{count}} in flight": "{{count}} in flight"
+    "{{count}} in flight": "{{count}} in flight",
+    "Subscribe to an acceleration plan to unlock the accelerated entry point.": "Subscribe to an acceleration plan to unlock the accelerated entry point."
   }
 }

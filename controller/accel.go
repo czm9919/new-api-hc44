@@ -50,11 +50,13 @@ type accelLimitsView struct {
 }
 
 // accelIngressView 入站加速接入信息。Host 为空表示管理员还没配 DCDN 域名，
-// 前端应整块隐藏而不是显示一个空地址。
+// 前端应整块隐藏而不是显示一个空地址；Locked=true 表示已配置但该用户没有
+// 生效订阅——域名是付费门槛（hc51 守卫会拦无订阅请求），所以不下发地址。
 type accelIngressView struct {
 	Host    string `json:"host"`
 	BaseURL string `json:"base_url"`
 	Example string `json:"example"`
+	Locked  bool   `json:"locked"`
 }
 
 type accelUserView struct {
@@ -96,7 +98,7 @@ func buildAccelIngress(host string) accelIngressView {
 		Example: "curl " + baseURL + "/v1/chat/completions \\\n" +
 			"  -H \"Authorization: Bearer sk-xxx\" \\\n" +
 			"  -H \"Content-Type: application/json\" \\\n" +
-			"  -d '{\"model\":\"gpt-4o-mini\",\"group\":\"accel\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'",
+			"  -d '{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'",
 	}
 }
 
@@ -188,6 +190,14 @@ func GetAccelOverview(c *gin.Context) {
 	if paidBalance < 0 {
 		paidBalance = 0
 	}
+	// 接入地址只发给有生效订阅的用户（hc51）：域名本身是付费门槛，
+	// 守卫会拦无订阅请求，但页面也不该把地址白送出去让人试。
+	ingress := accelIngressView{}
+	if sub != nil && sub.Active(time.Now().Unix()) {
+		ingress = buildAccelIngress(operation_setting.GetAccelSetting().IngressHost)
+	} else if operation_setting.GetAccelSetting().IngressHost != "" {
+		ingress = accelIngressView{Locked: true}
+	}
 	view := accelUserView{
 		Plans:          plans,
 		Subscription:   buildAccelSubscriptionView(sub, planNames),
@@ -200,7 +210,7 @@ func GetAccelOverview(c *gin.Context) {
 			MaxConcurrency: service.AccelMaxConc,
 			MaxExtendDays:  service.AccelMaxExtendDays,
 		},
-		Ingress:     buildAccelIngress(operation_setting.GetAccelSetting().IngressHost),
+		Ingress:     ingress,
 		SlotBackend: service.AccelSlotBackend(),
 		ServerTime:  time.Now().Unix(),
 	}

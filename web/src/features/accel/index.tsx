@@ -965,6 +965,24 @@ function UsageGuide({ group }: { group: string }) {
 function IngressCard({ ingress }: { ingress: AccelIngress }) {
   const { t } = useTranslation()
   const { copyToClipboard } = useCopyToClipboard()
+  // 未订阅：域名不下发（locked），只提示订阅后可用。
+  if (ingress.locked && !ingress.host) {
+    return (
+      <Card>
+        <CardHeader className='gap-1'>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Zap className='size-4' />
+            {t('Accelerated entry point')}
+          </CardTitle>
+          <CardDescription>
+            {t(
+              'Subscribe to an acceleration plan to unlock the accelerated entry point.'
+            )}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    )
+  }
   if (!ingress.host) {
     return null
   }

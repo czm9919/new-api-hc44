@@ -117,6 +117,8 @@ describe('security sidebar visibility', () => {
       'Lucky Wheel',
       // hc48 新增：加速专线
       'Acceleration',
+      // hc51 新增：消耗排行榜入口
+      'Rankings',
     ])
     expect(
       result.current

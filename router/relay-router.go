@@ -72,6 +72,9 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
+	// hc51 加速域名订阅守卫：从加速域名进来且无生效订阅的请求直接 403。
+	// 必须在 TokenAuth 之后（要 userId）、Distribute 之前（省掉无用调度）。
+	relayV1Router.Use(middleware.AccelIngressGuard())
 	{
 		// Responses WebSocket route. Channel selection happens after the first
 		// response.create event; each event runs the ordinary request limiter.
