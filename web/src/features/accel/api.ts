@@ -17,22 +17,44 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /*
- * 加速专线（hc48）前端接口。
+ * 加速专线（hc48 / hc49）前端接口。
  *
  * 后端口径：
  *  - 套餐解锁的是「分组」，用户拿到 group_name 后要把它填到令牌的分组上；
- *  - 月费只从付费余额扣（quota - free_quota），手机额度（免费部分）用不了；
- *  - 自动续费关闭后，到期前仍可用，到期自然失效，不做按天退款。
+ *  - 月费以**美元**报价（price_usd），只从付费余额扣，免费额度用不了；
+ *  - 自动续费关闭后，到期前仍可用，到期自然失效，不做按天退款；
+ *  - 用量（usage）按分组从消费日志聚合，是「这条线到底用了多少」的唯一来源。
  */
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
+
+/** 一段窗口内的加速专线用量。 */
+export interface AccelUsage {
+  requests: number
+  /** 内部额度，仅用于对账，页面不要直接展示。 */
+  quota: number
+  /** 美元金额，页面展示用这个。 */
+  quota_usd: number
+  /** 最后一次消费时间，0 表示窗口内没有使用。 */
+  last_used_at: number
+}
+
+/** 服务端下发的输入约束，避免前后端各写一份阈值。 */
+export interface AccelLimits {
+  max_price_usd: number
+  price_step_usd: number
+  max_concurrency: number
+  max_extend_days: number
+}
 
 export interface AccelPlan {
   id: number
   name: string
   group_name: string
-  /** 月费，额度单位。 */
+  /** 月费，额度单位（内部计费口径，不要直接展示）。 */
   price_per_month: number
+  /** 月费的美元报价，页面展示与输入都用这个。 */
+  price_usd: number
   /** 单用户并发上限，0 为不限。 */
   concurrency: number
   description: string
@@ -53,7 +75,11 @@ export interface AccelSubscription {
   /** 剩余天数，向上取整。 */
   days_left: number
   price_per_month: number
+  /** 月费快照的美元报价。 */
+  price_usd: number
   total_charged: number
+  /** 累计扣费的美元金额。 */
+  total_charged_usd: number
   /** 最近一次续费失败原因（如余额不足），正常为空串。 */
   last_charge_error: string
 }
@@ -63,26 +89,49 @@ export interface AccelOverview {
   subscription: AccelSubscription | null
   /** 用户默认分组，用于提示「token 不设分组时走的就是它」。 */
   user_group: string
-  /** 付费余额（quota - free_quota）。 */
+  /** 付费余额（quota - free_quota），内部额度。 */
   paid_balance: number
+  /** 付费余额的美元报价。 */
+  paid_balance_usd: number
+  /** 本期用量（当前订阅周期内）；未订阅为 null。 */
+  usage: AccelUsage | null
+  /** 今日用量；未订阅为 null。 */
+  today_usage: AccelUsage | null
+  limits: AccelLimits
   server_time: number
 }
 
 export interface AccelPlanInput {
   name: string
   group_name: string
-  price_per_month: number
+  /** 月费，美元。服务端负责换算成额度。 */
+  price_usd: number
   concurrency: number
   description: string
   enabled: boolean
   sort_order: number
 }
 
-export interface AccelSubRow extends AccelSubscription {
+export interface AccelSubRow {
   user_id: number
   username: string
-  created_at: number
-  updated_at: number
+  plan_name: string
+  group_name: string
+  start_at: number
+  expire_at: number
+  auto_renew: boolean
+  status: string
+  days_left: number
+  price_usd: number
+  total_charged_usd: number
+  last_charge_error: string
+}
+
+export interface AccelSubPage {
+  page: number
+  page_size: number
+  total: number
+  items: AccelSubRow[]
 }
 
 export async function getAccelOverview(): Promise<AccelOverview> {
@@ -90,8 +139,19 @@ export async function getAccelOverview(): Promise<AccelOverview> {
   return requireServerSuccess(res.data)?.data
 }
 
-export async function subscribeAccel(planId: number): Promise<AccelSubscription> {
-  const res = await api.post('/api/user/accel/subscribe', { plan_id: planId })
+/**
+ * 开通 / 换套餐。
+ * switchPlan=true 表示「生效中换套餐」：会按新价重新扣一个月并**作废剩余时长**，
+ * 必须由用户二次确认后再传，否则服务端返回 409。
+ */
+export async function subscribeAccel(
+  planId: number,
+  switchPlan = false
+): Promise<AccelSubscription> {
+  const res = await api.post('/api/user/accel/subscribe', {
+    plan_id: planId,
+    switch: switchPlan,
+  })
   return requireServerSuccess(res.data)?.data
 }
 
@@ -126,5 +186,40 @@ export async function updateAccelPlan(
 
 export async function deleteAccelPlan(id: number): Promise<void> {
   const res = await api.delete(`/api/user/accel/plans/${id}`)
+  requireServerSuccess(res.data)
+}
+
+/** 管理端：订阅列表（含已到期）。 */
+export async function listAccelSubs(
+  page = 1,
+  pageSize = 20
+): Promise<AccelSubPage> {
+  const res = await api.get('/api/user/accel/subscriptions', {
+    params: { p: page, page_size: pageSize },
+  })
+  return requireServerSuccess(res.data)?.data
+}
+
+/** 管理端：补时长（不扣费）。 */
+export async function extendAccelSub(
+  userId: number,
+  days: number
+): Promise<AccelSubscription> {
+  const res = await api.post('/api/user/accel/subscriptions/extend', {
+    user_id: userId,
+    days,
+  })
+  return requireServerSuccess(res.data)?.data
+}
+
+/** 管理端：强制停用（不退款）。 */
+export async function revokeAccelSub(
+  userId: number,
+  reason: string
+): Promise<void> {
+  const res = await api.post('/api/user/accel/subscriptions/revoke', {
+    user_id: userId,
+    reason,
+  })
   requireServerSuccess(res.data)
 }

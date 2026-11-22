@@ -249,6 +249,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/accel/plans/:id", controller.AdminUpdateAccelPlan)
 				adminRoute.DELETE("/accel/plans/:id", controller.AdminDeleteAccelPlan)
 				adminRoute.GET("/accel/subscriptions", controller.AdminListAccelSubs)
+				adminRoute.POST("/accel/subscriptions/extend", controller.AdminExtendAccelSub)
+				adminRoute.POST("/accel/subscriptions/revoke", controller.AdminRevokeAccelSub)
 				// QQ 机器人接入配置（v1.1.0 M2）：服务令牌 + 免费模型门禁开关。
 				// 单独一组接口，避免把令牌混进用户态 /api/user/lottery 响应。
 				adminRoute.GET("/lottery/qq/settings", controller.AdminGetQQAgentSettings)

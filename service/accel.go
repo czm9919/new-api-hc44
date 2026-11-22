@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,7 +39,20 @@ var (
 	ErrAccelAlreadyActive    = errors.New("accel subscription is still active")
 	ErrAccelNoSubscription   = errors.New("accel subscription not found")
 	ErrAccelInsufficientFund = errors.New("insufficient paid balance")
+	ErrAccelInvalidDays      = errors.New("invalid extend days")
 )
+
+// AccelMaxPriceUSD 单月费用上限的美元报价，供管理端表单与错误文案复用。
+// 上限本身（AccelMaxPrice）是额度常量，换算随 QuotaPerUnit 变化，所以用函数。
+func AccelMaxPriceUSD() float64 {
+	return common.RoundUSD(common.QuotaToUSD(AccelMaxPrice))
+}
+
+// AccelPriceStepUSD 管理端价格输入的最小步长（1 美分）。
+const AccelPriceStepUSD = 0.01
+
+// AccelMaxExtendDays 管理端单次补时长上限（10 年），防止手滑输入 999999。
+const AccelMaxExtendDays = 3650
 
 type accelCacheEntry struct {
 	sub *model.UserAccelSub
@@ -241,9 +255,12 @@ func UserCanUseGroup(userId int, userGroup string, groupName string) bool {
 	return sub.GroupName == groupName
 }
 
-// SubscribeAccelPlan 开通/续费：先原子扣月费，再落订阅；写库失败则退款。
-// 已生效的订阅直接返回错误，避免用户连点造成重复扣费。
-func SubscribeAccelPlan(userId, planId int) (*model.UserAccelSub, error) {
+// SubscribeAccelPlan 开通/续费/换套餐：先原子扣月费，再落订阅；写库失败则退款。
+//
+// allowSwitch 为 true 时允许「生效中换套餐」：按新套餐价格重新扣一个月，
+// 周期从当下重新计算（原剩余时长作废）。这是不可逆的资损动作，所以必须
+// 由前端二次确认后显式传 switch=true；默认 false 仍返回 409，避免连点重复扣费。
+func SubscribeAccelPlan(userId, planId int, allowSwitch bool) (*model.UserAccelSub, error) {
 	plan, err := model.GetAccelPlanById(planId)
 	if err != nil {
 		return nil, ErrAccelPlanNotFound
@@ -261,7 +278,10 @@ func SubscribeAccelPlan(userId, planId int) (*model.UserAccelSub, error) {
 	}
 	now := time.Now().Unix()
 	if existing != nil && existing.Active(now) {
-		return nil, ErrAccelAlreadyActive
+		// 同一套餐重复提交 = 连点，直接拒绝；不同套餐才谈得上「换」。
+		if !allowSwitch || existing.PlanId == plan.Id {
+			return nil, ErrAccelAlreadyActive
+		}
 	}
 
 	ok, err := chargePaidBalance(userId, plan.PricePerMonth)
@@ -290,6 +310,7 @@ func SubscribeAccelPlan(userId, planId int) (*model.UserAccelSub, error) {
 			return nil, err
 		}
 		InvalidateAccelCache(userId)
+		sub.FillPriceUSD()
 		return sub, nil
 	}
 
@@ -321,6 +342,7 @@ func SubscribeAccelPlan(userId, planId int) (*model.UserAccelSub, error) {
 	existing.LastChargedAt = now
 	existing.LastChargeError = ""
 	existing.TotalCharged += plan.PricePerMonth
+	existing.FillPriceUSD()
 	return existing, nil
 }
 
@@ -345,6 +367,65 @@ func SetAccelAutoRenew(userId int, autoRenew bool) error {
 		return ErrAccelNoSubscription
 	}
 	if err := model.UpdateUserAccelSubFields(userId, map[string]any{"auto_renew": autoRenew}); err != nil {
+		return err
+	}
+	InvalidateAccelCache(userId)
+	return nil
+}
+
+// ExtendAccelSubscription 管理端补时长（售后/补偿），不扣费。
+// 已过期的订阅从当下起算，避免补偿的天数被「过去」吃掉。
+func ExtendAccelSubscription(userId int, days int) (*model.UserAccelSub, error) {
+	if days <= 0 || days > AccelMaxExtendDays {
+		return nil, ErrAccelInvalidDays
+	}
+	sub, err := model.GetUserAccelSub(userId)
+	if err != nil {
+		return nil, err
+	}
+	if sub == nil {
+		return nil, ErrAccelNoSubscription
+	}
+	now := time.Now().Unix()
+	base := sub.ExpireAt
+	if base < now {
+		base = now
+	}
+	newExpire := base + int64(days)*86400
+	fields := map[string]any{
+		"expire_at":         newExpire,
+		"status":            model.AccelSubStatusActive,
+		"last_charge_error": "",
+	}
+	if err := model.UpdateUserAccelSubFields(userId, fields); err != nil {
+		return nil, err
+	}
+	InvalidateAccelCache(userId)
+	sub.ExpireAt = newExpire
+	sub.Status = model.AccelSubStatusActive
+	sub.LastChargeError = ""
+	return sub, nil
+}
+
+// RevokeAccelSubscription 管理端强制停用（违规、退款、风控）。
+// 只改状态不退款：退款是资金动作，必须走人工核对，代码里不自动执行。
+func RevokeAccelSubscription(userId int, reason string) error {
+	sub, err := model.GetUserAccelSub(userId)
+	if err != nil {
+		return err
+	}
+	if sub == nil {
+		return ErrAccelNoSubscription
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "已被管理员停用"
+	}
+	fields := map[string]any{
+		"status":            model.AccelSubStatusExpired,
+		"auto_renew":        false,
+		"last_charge_error": truncateAccelText(reason, 240),
+	}
+	if err := model.UpdateUserAccelSubFields(userId, fields); err != nil {
 		return err
 	}
 	InvalidateAccelCache(userId)

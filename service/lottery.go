@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -65,11 +66,15 @@ const (
 
 // LotteryPrize 一个转盘扇区。
 type LotteryPrize struct {
-	Id     string `json:"id"`
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Quota  int    `json:"quota"`
-	Weight int    `json:"weight"`
+	Id    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Quota int    `json:"quota"`
+	// QuotaUSD 奖品的美元报价。
+	// 读侧填充、写侧接受，**不落库**：库里只存 quota，美元只是展示口径，
+	// 换算随 QuotaPerUnit 走，存下来反而会在改配置后变成历史垃圾。
+	QuotaUSD float64 `json:"quota_usd,omitempty"`
+	Weight   int     `json:"weight"`
 }
 
 // LotterySettings 抽奖的运营配置。
@@ -82,15 +87,17 @@ type LotterySettings struct {
 	// PaidEnabled 付费抽奖总开关。默认关闭：运营显式打开才会向用户收费。
 	PaidEnabled bool `json:"paid_enabled"`
 	// PaidPrice 单次付费抽奖价格（额度，只扣付费余额，不动免费额度）。
+	// 对外报价用 PaidPriceUSD，额度字段保留给计费链路。
 	PaidPrice int `json:"paid_price"`
+	// PaidPriceUSD 单次付费抽奖的美元报价（唯一对外口径）。
+	PaidPriceUSD float64 `json:"paid_price_usd"`
 	// PaidDailyLimit 每日付费抽奖次数上限，与免费次数分开计算。
 	PaidDailyLimit int `json:"paid_daily_limit"`
 }
 
 // DefaultLotteryPrizes 默认奖池：权重合计 95，头奖约 2%。
-// 额度单位与签到一致（1000 quota ≈ 0.002 USD）。
 func DefaultLotteryPrizes() []LotteryPrize {
-	return []LotteryPrize{
+	prizes := []LotteryPrize{
 		{Id: "thanks", Name: "谢谢参与", Type: LotteryPrizeTypeNone, Quota: 0, Weight: 40},
 		{Id: "quota-500", Name: "500 额度", Type: LotteryPrizeTypeQuota, Quota: 500, Weight: 25},
 		{Id: "quota-2000", Name: "2000 额度", Type: LotteryPrizeTypeQuota, Quota: 2000, Weight: 15},
@@ -98,6 +105,12 @@ func DefaultLotteryPrizes() []LotteryPrize {
 		{Id: "quota-10000", Name: "10000 额度", Type: LotteryPrizeTypeQuota, Quota: 10000, Weight: 5},
 		{Id: "quota-30000", Name: "30000 额度（头奖）", Type: LotteryPrizeTypeQuota, Quota: 30000, Weight: 2},
 	}
+	// 默认奖池也要带美元报价：否则「恢复默认」后的响应里 quota_usd 全是 0，
+	// 管理端显示成一排 $0，看起来像配置丢了。
+	for i := range prizes {
+		prizes[i].QuotaUSD = common.RoundUSD(common.QuotaToUSD(int64(prizes[i].Quota)))
+	}
+	return prizes
 }
 
 func defaultLotterySettings() LotterySettings {
@@ -146,11 +159,12 @@ func NormalizeLotteryPrizes(prizes []LotteryPrize) []LotteryPrize {
 		}
 		seen[id] = struct{}{}
 		out = append(out, LotteryPrize{
-			Id:     id,
-			Name:   name,
-			Type:   prizeType,
-			Quota:  quota,
-			Weight: weight,
+			Id:       id,
+			Name:     name,
+			Type:     prizeType,
+			Quota:    quota,
+			QuotaUSD: common.RoundUSD(common.QuotaToUSD(int64(quota))),
+			Weight:   weight,
 		})
 		if len(out) >= LotteryMaxWheelPrizes {
 			break
@@ -184,6 +198,11 @@ func CanonicalizeLotteryPrizes(prizes []LotteryPrize) []LotteryPrize {
 		quota := prize.Quota
 		if prizeType == LotteryPrizeTypeNone {
 			quota = 0
+		}
+		// 美元报价优先：管理端现在只填美元，额度由服务端换算；
+		// 老客户端仍可只传 quota（此时 QuotaUSD 为 0，不覆盖）。
+		if prizeType == LotteryPrizeTypeQuota && prize.QuotaUSD > 0 {
+			quota = int(common.USDToQuota(prize.QuotaUSD))
 		}
 		out = append(out, LotteryPrize{
 			Id:     id,
@@ -241,7 +260,7 @@ func ValidateLotterySettings(settings LotterySettings) error {
 	if settings.PaidPrice < 0 || settings.PaidPrice > LotteryMaxPaidPrice {
 		fields = append(fields, LotterySettingsFieldError{
 			Field:   "paid_price",
-			Message: fmt.Sprintf("单次价格需在 0 到 %d 之间", LotteryMaxPaidPrice),
+			Message: fmt.Sprintf("单次价格需在 0 到 %.2f 美元之间", common.QuotaToUSD(LotteryMaxPaidPrice)),
 		})
 	}
 	if settings.PaidDailyLimit < 0 || settings.PaidDailyLimit > LotteryMaxPaidDailyLimit {
@@ -299,16 +318,16 @@ func ValidateLotterySettings(settings LotterySettings) error {
 			})
 		}
 		if prize.Quota < 0 {
-			fields = append(fields, LotterySettingsFieldError{prefix + ".quota", "额度不能为负数"})
+			fields = append(fields, LotterySettingsFieldError{prefix + ".quota", "奖品金额不能为负数"})
 		} else if prize.Quota > LotteryMaxPrizeQuota {
 			fields = append(fields, LotterySettingsFieldError{
 				prefix + ".quota",
-				fmt.Sprintf("单奖额度不能超过 %d", LotteryMaxPrizeQuota),
+				fmt.Sprintf("单奖金额不能超过 %.2f 美元", common.QuotaToUSD(LotteryMaxPrizeQuota)),
 			})
 		} else if prize.Type == LotteryPrizeTypeQuota && prize.Quota == 0 {
 			fields = append(fields, LotterySettingsFieldError{
 				prefix + ".quota",
-				"额度奖品必须填正数额度（不给额度请选「谢谢参与」）",
+				"金额奖品必须填正数金额（不给奖励请选「谢谢参与」）",
 			})
 		}
 		if prize.Weight < LotteryMinPrizeWeight || prize.Weight > LotteryMaxPrizeWeight {
@@ -399,6 +418,14 @@ func GetLotterySettings() LotterySettings {
 			}
 		}
 	}
+	// 美元报价在这里统一补：默认奖池走的是 DefaultLotteryPrizes()，
+	// 不会经过 NormalizeLotteryPrizes，漏掉这一步前端会显示 $0。
+	s.PaidPriceUSD = common.RoundUSD(common.QuotaToUSD(int64(s.PaidPrice)))
+	for i := range s.Prizes {
+		if s.Prizes[i].QuotaUSD <= 0 {
+			s.Prizes[i].QuotaUSD = common.RoundUSD(common.QuotaToUSD(int64(s.Prizes[i].Quota)))
+		}
+	}
 	return s
 }
 
@@ -460,6 +487,8 @@ type LotteryStatus struct {
 	Quota int `json:"quota"`
 	// PaidQuota 付费余额，付费抽奖只认这个数。
 	PaidQuota int `json:"paid_quota"`
+	// PaidQuotaUSD 付费余额的美元报价（页面展示口径）。
+	PaidQuotaUSD float64 `json:"paid_quota_usd"`
 	// PaidAffordable 现在能不能付费抽一次（前端据此禁用按钮，不用自己算）。
 	PaidAffordable bool   `json:"paid_affordable"`
 	QQBound        bool   `json:"qq_bound"`
@@ -529,6 +558,7 @@ func GetLotteryStatus(userId int) (*LotteryStatus, error) {
 		PaidSpinsRemaining: paidRemaining,
 		Quota:              quota,
 		PaidQuota:          paidQuota,
+		PaidQuotaUSD:       common.RoundUSD(common.QuotaToUSD(int64(paidQuota))),
 		PaidAffordable:     paidAffordable,
 		QQBound:            strings.TrimSpace(qq) != "",
 		QQ:                 MaskQQ(strings.TrimSpace(qq)),
@@ -537,13 +567,13 @@ func GetLotteryStatus(userId int) (*LotteryStatus, error) {
 
 // LotterySpinResult 抽奖结果（供前端播放转盘动画用 prize_index 定位扇区）。
 type LotterySpinResult struct {
-	Prize          LotteryPrize       `json:"prize"`
-	PrizeIndex     int                `json:"prize_index"`
-	QuotaAwarded   int                `json:"quota_awarded"`
-	SpinsUsed      int                `json:"spins_used"`
-	SpinsRemaining int                `json:"spins_remaining"`
-	PaidSpinsUsed  int                `json:"paid_spins_used"`
-	PaidSpinsLeft  int                `json:"paid_spins_remaining"`
+	Prize          LotteryPrize `json:"prize"`
+	PrizeIndex     int          `json:"prize_index"`
+	QuotaAwarded   int          `json:"quota_awarded"`
+	SpinsUsed      int          `json:"spins_used"`
+	SpinsRemaining int          `json:"spins_remaining"`
+	PaidSpinsUsed  int          `json:"paid_spins_used"`
+	PaidSpinsLeft  int          `json:"paid_spins_remaining"`
 	// Paid 本次是否付费抽奖；QuotaCost 本次花费（免费为 0）。
 	Paid      bool               `json:"paid"`
 	QuotaCost int                `json:"quota_cost"`
@@ -721,6 +751,11 @@ func pickLotteryPrizeWithIndex(prizes []LotteryPrize) (LotteryPrize, int, error)
 // 校验不通过时返回 *LotterySettingsError（不写库），成功后回读一次，
 // 让前端拿到「实际生效」的配置而不是自己提交的草稿。
 func SaveLotterySettings(settings LotterySettings) (LotterySettings, error) {
+	// 美元是唯一的报价入口：管理端填 $，额度由服务端换算。
+	// 老客户端只传 paid_price（额度）时 PaidPriceUSD 为 0，保持原值不动。
+	if settings.PaidPriceUSD > 0 {
+		settings.PaidPrice = int(common.USDToQuota(settings.PaidPriceUSD))
+	}
 	settings.Prizes = CanonicalizeLotteryPrizes(settings.Prizes)
 	if err := ValidateLotterySettings(settings); err != nil {
 		return LotterySettings{}, err

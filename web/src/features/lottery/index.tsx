@@ -63,7 +63,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatTimestampToDate } from '@/lib/format'
+import {
+  formatCurrencyUSD,
+  formatQuota,
+  formatTimestampToDate,
+} from '@/lib/format'
 
 import {
   clearAdminQQToken,
@@ -297,10 +301,13 @@ const PRIZE_NAME_MAX = 24
 const PRIZE_MAX = 12
 const PRIZE_WEIGHT_MIN = 1
 const PRIZE_WEIGHT_MAX = 1000
-const PRIZE_QUOTA_MAX = 1000000
+// 金额一律按美元报价与输入：后端把美元换算成内部额度（quota），
+// 前端不再自己乘除 QuotaPerUnit，避免改配置后两边算错。
+// 这两个上限对应后端 service.LotteryMaxPrizeQuota / LotteryMaxPaidPrice
+// （500000 额度 = 1 美元，因此 1000000 额度 = 2 美元）。
+const PRIZE_VALUE_MAX_USD = 2
 const DAILY_SPINS_MAX = 50
-// 与后端 service.LotteryMaxPaidPrice / LotteryMaxPaidDailyLimit 保持一致。
-const PAID_PRICE_MAX = 1000000
+const PAID_PRICE_MAX_USD = 2
 const PAID_DAILY_LIMIT_MAX = 200
 
 function validatePrizeDraft(
@@ -325,10 +332,10 @@ function validatePrizeDraft(
   if (
     !Number.isFinite(paidPrice) ||
     paidPrice < 0 ||
-    paidPrice > PAID_PRICE_MAX
+    paidPrice > PAID_PRICE_MAX_USD
   ) {
-    errors.paid_price = t('Paid price must be between 0 and {{max}}', {
-      max: PAID_PRICE_MAX,
+    errors.paid_price = t('Paid price must be between 0 and {{max}} USD', {
+      max: PAID_PRICE_MAX_USD,
     })
   } else if (paidEnabled && paidPrice <= 0) {
     errors.paid_price = t('Paid price must be positive when paid spins are on')
@@ -368,12 +375,14 @@ function validatePrizeDraft(
       )
     }
     if (prize.type === 'quota') {
-      if (!Number.isFinite(prize.quota) || prize.quota <= 0) {
-        errors[field('quota')] = t('Quota prize needs a positive quota')
-      } else if (prize.quota > PRIZE_QUOTA_MAX) {
-        errors[field('quota')] = t('Prize quota must be at most {{max}}', {
-          max: PRIZE_QUOTA_MAX,
-        })
+      const value = prize.quota_usd ?? 0
+      if (!Number.isFinite(value) || value <= 0) {
+        errors[field('quota')] = t('Prize value must be greater than 0')
+      } else if (value > PRIZE_VALUE_MAX_USD) {
+        errors[field('quota')] = t(
+          'Prize value must be at most {{max}} USD',
+          { max: PRIZE_VALUE_MAX_USD }
+        )
       }
     }
     if (
@@ -416,7 +425,8 @@ function newPrizeDraft(): LotteryPrize {
     id: `prize-${suffix}`,
     name: '',
     type: 'quota',
-    quota: 500,
+    quota: 0,
+    quota_usd: 0.01,
     weight: 1,
   }
 }
@@ -429,7 +439,9 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
   const [requireQQ, setRequireQQ] = useState(props.settings.require_qq)
   const [dailySpins, setDailySpins] = useState(props.settings.daily_spins)
   const [paidEnabled, setPaidEnabled] = useState(props.settings.paid_enabled)
-  const [paidPrice, setPaidPrice] = useState(props.settings.paid_price)
+  const [paidPriceUSD, setPaidPriceUSD] = useState(
+    props.settings.paid_price_usd
+  )
   const [paidDailyLimit, setPaidDailyLimit] = useState(
     props.settings.paid_daily_limit
   )
@@ -444,7 +456,7 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
     setRequireQQ(props.settings.require_qq)
     setDailySpins(props.settings.daily_spins)
     setPaidEnabled(props.settings.paid_enabled)
-    setPaidPrice(props.settings.paid_price)
+    setPaidPriceUSD(props.settings.paid_price_usd)
     setPaidDailyLimit(props.settings.paid_daily_limit)
     setPrizes(props.settings.prizes)
   }, [props.settings])
@@ -455,11 +467,11 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
         prizes,
         dailySpins,
         paidEnabled,
-        paidPrice,
+        paidPriceUSD,
         paidDailyLimit,
         t
       ),
-    [prizes, dailySpins, paidEnabled, paidPrice, paidDailyLimit, t]
+    [prizes, dailySpins, paidEnabled, paidPriceUSD, paidDailyLimit, t]
   )
   const totalWeight = prizes.reduce(
     (sum, prize) => sum + (prize.weight > 0 ? prize.weight : 0),
@@ -473,7 +485,7 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
     setRequireQQ(saved.require_qq)
     setDailySpins(saved.daily_spins)
     setPaidEnabled(saved.paid_enabled)
-    setPaidPrice(saved.paid_price)
+    setPaidPriceUSD(saved.paid_price_usd)
     setPaidDailyLimit(saved.paid_daily_limit)
     setPrizes(saved.prizes)
     void queryClient.invalidateQueries({ queryKey: ['lottery-status'] })
@@ -526,12 +538,16 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
       daily_spins: dailySpins,
       require_qq: requireQQ,
       paid_enabled: paidEnabled,
-      paid_price: paidPrice,
+      // 报价只认美元：服务端换算成额度，这里把额度字段显式清零，
+      // 避免旧草稿里的 quota 值覆盖新换算结果。
+      paid_price: 0,
+      paid_price_usd: paidPriceUSD,
       paid_daily_limit: paidDailyLimit,
       prizes: prizes.map((prize) => ({
         ...prize,
         name: prize.name.trim(),
         quota: prize.type === 'quota' ? prize.quota : 0,
+        quota_usd: prize.type === 'quota' ? (prize.quota_usd ?? 0) : 0,
       })),
     })
   }
@@ -599,19 +615,22 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
               {t('Paid spins enabled')}
             </label>
             <label className='flex items-center gap-2'>
-              {t('Paid price')}
+              {t('Paid price (USD)')}
               <Input
                 type='number'
                 min={0}
-                max={PAID_PRICE_MAX}
-                value={paidPrice}
-                onChange={(event) => setPaidPrice(Number(event.target.value))}
+                max={PAID_PRICE_MAX_USD}
+                step={0.01}
+                value={paidPriceUSD}
+                onChange={(event) =>
+                  setPaidPriceUSD(Number(event.target.value))
+                }
                 className='w-28'
-                aria-label={t('Paid price')}
+                aria-label={t('Paid price (USD)')}
                 aria-invalid={Boolean(errorOf('paid_price'))}
               />
               <span className='text-muted-foreground text-xs'>
-                {t('quota per paid spin')}
+                {t('USD per paid spin')}
               </span>
             </label>
             <label className='flex items-center gap-2'>
@@ -640,10 +659,10 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
               'Paid spins only spend the paid balance, never the free quota. Users without enough balance are rejected instead of going negative.'
             )}
           </p>
-          {paidEnabled && paidPrice > 0 && paidDailyLimit > 0 ? (
+          {paidEnabled && paidPriceUSD > 0 && paidDailyLimit > 0 ? (
             <p className='text-muted-foreground text-xs'>
               {t('Max paid spend per user per day: {{amount}}', {
-                amount: paidPrice * paidDailyLimit,
+                amount: formatCurrencyUSD(paidPriceUSD * paidDailyLimit),
               })}
             </p>
           ) : null}
@@ -713,7 +732,7 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
               <div className='text-muted-foreground grid grid-cols-[minmax(0,2fr)_110px_110px_100px_70px_36px] gap-2 px-1 text-xs'>
                 <span>{t('Prize name')}</span>
                 <span>{t('Type')}</span>
-                <span>{t('Quota')}</span>
+                <span>{t('Value (USD)')}</span>
                 <span>{t('Weight')}</span>
                 <span>{t('Chance')}</span>
                 <span />
@@ -729,7 +748,7 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
                     <div className='grid grid-cols-[minmax(0,2fr)_110px_110px_100px_70px_36px] items-center gap-2'>
                       <Input
                         value={prize.name}
-                        placeholder={t('e.g. 500 quota')}
+                        placeholder={t('e.g. $0.01 bonus')}
                         onChange={(event) =>
                           updatePrize(index, { name: event.target.value })
                         }
@@ -751,15 +770,16 @@ function AdminSettingsCard(props: { settings: LotterySettings }) {
                       <Input
                         type='number'
                         min={0}
-                        max={PRIZE_QUOTA_MAX}
-                        value={quotaDisabled ? 0 : prize.quota}
+                        max={PRIZE_VALUE_MAX_USD}
+                        step={0.001}
+                        value={quotaDisabled ? 0 : (prize.quota_usd ?? 0)}
                         disabled={quotaDisabled}
                         onChange={(event) =>
                           updatePrize(index, {
-                            quota: Number(event.target.value),
+                            quota_usd: Number(event.target.value),
                           })
                         }
-                        aria-label={`${t('Quota')} ${index + 1}`}
+                        aria-label={`${t('Value (USD)')} ${index + 1}`}
                         aria-invalid={Boolean(
                           errorOf(`prizes[${index}].quota`)
                         )}
@@ -1159,7 +1179,7 @@ export function LotteryPage() {
   const freeRemaining = status?.spins_remaining ?? 0
   const paidRemaining = status?.paid_spins_remaining ?? 0
   const paidEnabled = settings?.paid_enabled === true
-  const paidPrice = settings?.paid_price ?? 0
+  const paidPriceUSD = settings?.paid_price_usd ?? 0
   // 只有后端明确说「抽得起」才允许点：前端不再自己算余额，避免和后端口径不一致。
   const canSpinFree =
     Boolean(settings?.enabled) && freeRemaining > 0 && !qqBlocked && !spinning
@@ -1196,7 +1216,7 @@ export function LotteryPage() {
         ) : null}
         {paidEnabled ? (
           <Badge variant='outline'>
-            {t('Paid balance')}: {status?.paid_quota ?? 0}
+            {t('Paid balance')}: {formatCurrencyUSD(status?.paid_quota_usd ?? 0)}
           </Badge>
         ) : null}
         <Button
@@ -1254,7 +1274,9 @@ export function LotteryPage() {
                       <Coins className='mr-2 h-5 w-5' />
                       {spinning && spinPaid
                         ? t('Spinning…')
-                        : t('Spin for {{price}}', { price: paidPrice })}
+                        : t('Spin for {{price}}', {
+                            price: formatCurrencyUSD(paidPriceUSD),
+                          })}
                     </Button>
                   ) : null}
                 </div>
@@ -1278,13 +1300,14 @@ export function LotteryPage() {
                     </p>
                     {result.quota_awarded > 0 ? (
                       <p className='text-muted-foreground mt-1 flex items-center justify-center gap-1 text-xs'>
-                        <Coins className='h-3 w-3' />+{result.quota_awarded}
+                        <Coins className='h-3 w-3' />+
+                        {formatQuota(result.quota_awarded)}
                       </p>
                     ) : null}
                     {result.quota_cost > 0 ? (
                       <p className='text-muted-foreground mt-1 text-xs'>
-                        {t('This spin cost {{cost}} quota', {
-                          cost: result.quota_cost,
+                        {t('This spin cost {{cost}}', {
+                          cost: formatQuota(result.quota_cost),
                         })}
                       </p>
                     ) : null}
@@ -1309,7 +1332,7 @@ export function LotteryPage() {
                     <span className='truncate'>{prize.name}</span>
                     <span className='text-muted-foreground text-xs'>
                       {prize.type === 'quota'
-                        ? `${prize.quota} · ${prize.weight}`
+                        ? `${formatQuota(prize.quota)} · ${prize.weight}`
                         : `- · ${prize.weight}`}
                     </span>
                   </div>
@@ -1348,9 +1371,11 @@ export function LotteryPage() {
                     ) : null}
                   </span>
                   <span className='text-muted-foreground ml-3 shrink-0 text-xs'>
-                    {record.quota_cost > 0 ? `-${record.quota_cost} · ` : ''}
+                    {record.quota_cost > 0
+                      ? `-${formatQuota(record.quota_cost)} · `
+                      : ''}
                     {record.quota_awarded > 0
-                      ? `+${record.quota_awarded}`
+                      ? `+${formatQuota(record.quota_awarded)}`
                       : '—'}{' '}
                     · {formatTimestampToDate(record.created_at)}
                   </span>

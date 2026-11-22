@@ -115,6 +115,8 @@ describe('security sidebar visibility', () => {
       'Key Pool',
       // hc37 新增：幸运轮盘
       'Lucky Wheel',
+      // hc48 新增：加速专线
+      'Acceleration',
     ])
     expect(
       result.current

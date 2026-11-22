@@ -44,6 +44,7 @@ const lotterySettings = {
   require_qq: true,
   paid_enabled: false,
   paid_price: 5000,
+  paid_price_usd: 0.01,
   paid_daily_limit: 5,
   prizes: [
     { id: 'thanks', name: '谢谢参与', type: 'none', quota: 0, weight: 40 },
@@ -52,6 +53,7 @@ const lotterySettings = {
       name: '500 额度',
       type: 'quota',
       quota: 500,
+      quota_usd: 0.001,
       weight: 60,
     },
   ],
@@ -73,6 +75,7 @@ const statusPayload = {
   paid_spins_remaining: 0,
   quota: 0,
   paid_quota: 0,
+  paid_quota_usd: 0,
   paid_affordable: false,
   qq_bound: true,
   qq: '123****89',
@@ -206,7 +209,7 @@ describe('lottery admin settings', () => {
     )
     renderPage()
 
-    await screen.findByLabelText('Quota 2')
+    await screen.findByLabelText('Value (USD) 2')
     fireEvent.click(
       screen.getByRole('button', { name: 'Save lottery settings' })
     )
@@ -267,7 +270,8 @@ describe('lottery admin settings', () => {
       ok({
         ...lotterySettings,
         paid_enabled: true,
-        paid_price: 800,
+        paid_price: 250000,
+        paid_price_usd: 0.5,
         paid_daily_limit: 2,
       })
     )
@@ -280,7 +284,7 @@ describe('lottery admin settings', () => {
       .find((element) => element.getAttribute('role') === 'switch')
     expect(paidSwitch).toBeTruthy()
     fireEvent.click(paidSwitch as HTMLElement)
-    fireEvent.change(screen.getByLabelText('Paid price'), {
+    fireEvent.change(screen.getByLabelText('Paid price (USD)'), {
       target: { value: '0' },
     })
     fireEvent.click(
@@ -292,8 +296,8 @@ describe('lottery admin settings', () => {
     ).toBeInTheDocument()
     expect(put).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('Paid price'), {
-      target: { value: '800' },
+    fireEvent.change(screen.getByLabelText('Paid price (USD)'), {
+      target: { value: '0.5' },
     })
     fireEvent.change(screen.getByLabelText('Paid spins per day'), {
       target: { value: '2' },
@@ -305,7 +309,8 @@ describe('lottery admin settings', () => {
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put.mock.calls[0][1]).toMatchObject({
       paid_enabled: true,
-      paid_price: 800,
+      paid_price: 0,
+      paid_price_usd: 0.5,
       paid_daily_limit: 2,
     })
   })

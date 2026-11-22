@@ -4,6 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+
 	"gorm.io/gorm"
 )
 
@@ -24,7 +26,10 @@ type AccelPlan struct {
 	// 否则 TokenAuth 的 ContainsGroupRatio 校验会把它判成「已废弃分组」。
 	GroupName string `json:"group_name" gorm:"type:varchar(32);not null;index:idx_accel_plan_group"`
 	// PricePerMonth 月费（额度单位，与 quota 一致），只从付费余额扣。
+	// 对外报价统一用 PriceUSD，额度字段保留给计费链路与历史数据。
 	PricePerMonth int64 `json:"price_per_month" gorm:"bigint;not null;default:0"`
+	// PriceUSD 月费的美元报价，只读计算字段（不落库）。
+	PriceUSD float64 `json:"price_usd" gorm:"-"`
 	// Concurrency 单用户并发上限（同时进行的请求数），0 表示不限制。
 	Concurrency int    `json:"concurrency" gorm:"not null;default:0"`
 	Description string `json:"description" gorm:"type:varchar(255);default:''"`
@@ -36,6 +41,15 @@ type AccelPlan struct {
 
 func (AccelPlan) TableName() string {
 	return "accel_plans"
+}
+
+// FillPriceUSD 刷新只读的美元报价。所有返回给前端的路径都要过一遍，
+// 否则页面会显示 $0（额度字段有值但美元字段没填）。
+func (p *AccelPlan) FillPriceUSD() {
+	if p == nil {
+		return
+	}
+	p.PriceUSD = common.RoundUSD(common.QuotaToUSD(p.PricePerMonth))
 }
 
 // 订阅状态。expired 由惰性续费写入，避免起一个定时任务扫全表。
@@ -58,8 +72,12 @@ type UserAccelSub struct {
 	// PricePerMonth 购买时的月费快照：套餐被删或调价后，老订阅仍按原价续费，
 	// 不会出现「管理员改一次价，存量用户账单跟着变」。
 	PricePerMonth int64 `json:"price_per_month" gorm:"bigint;not null;default:0"`
-	StartAt       int64 `json:"start_at" gorm:"bigint;not null;default:0"`
-	ExpireAt  int64  `json:"expire_at" gorm:"bigint;not null;default:0;index:idx_accel_sub_expire"`
+	// PriceUSD 月费快照的美元报价，只读计算字段（不落库）。
+	PriceUSD float64 `json:"price_usd" gorm:"-"`
+	// TotalChargedUSD 累计扣费的美元金额，只读计算字段（不落库）。
+	TotalChargedUSD float64 `json:"total_charged_usd" gorm:"-"`
+	StartAt         int64   `json:"start_at" gorm:"bigint;not null;default:0"`
+	ExpireAt        int64   `json:"expire_at" gorm:"bigint;not null;default:0;index:idx_accel_sub_expire"`
 	// AutoRenew 关闭后到期自然失效；取消订阅只关这个开关，不做按天退款。
 	AutoRenew bool   `json:"auto_renew" gorm:"not null;default:true"`
 	Status    string `json:"status" gorm:"type:varchar(16);not null;default:'active';index:idx_accel_sub_status"`
@@ -74,6 +92,14 @@ type UserAccelSub struct {
 
 func (UserAccelSub) TableName() string {
 	return "user_accel_subs"
+}
+
+func (s *UserAccelSub) FillPriceUSD() {
+	if s == nil {
+		return
+	}
+	s.PriceUSD = common.RoundUSD(common.QuotaToUSD(s.PricePerMonth))
+	s.TotalChargedUSD = common.RoundUSD(common.QuotaToUSD(s.TotalCharged))
 }
 
 var ErrAccelPlanNotFound = errors.New("accel plan not found")
@@ -105,6 +131,9 @@ func ListAccelPlans(enabledOnly bool) ([]AccelPlan, error) {
 		query = query.Where("enabled = ?", true)
 	}
 	err := query.Order("sort_order ASC, id ASC").Find(&plans).Error
+	for i := range plans {
+		plans[i].FillPriceUSD()
+	}
 	return plans, err
 }
 
@@ -117,6 +146,7 @@ func GetAccelPlanById(id int) (*AccelPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan.FillPriceUSD()
 	return &plan, nil
 }
 
@@ -124,14 +154,22 @@ func CreateAccelPlan(plan *AccelPlan) error {
 	now := time.Now().Unix()
 	plan.CreatedAt = now
 	plan.UpdatedAt = now
-	return DB.Create(plan).Error
+	if err := DB.Create(plan).Error; err != nil {
+		return err
+	}
+	plan.FillPriceUSD()
+	return nil
 }
 
 func UpdateAccelPlan(plan *AccelPlan) error {
 	plan.UpdatedAt = time.Now().Unix()
-	return DB.Model(plan).
+	if err := DB.Model(plan).
 		Select("name", "group_name", "price_per_month", "concurrency", "description", "enabled", "sort_order", "updated_at").
-		Updates(plan).Error
+		Updates(plan).Error; err != nil {
+		return err
+	}
+	plan.FillPriceUSD()
+	return nil
 }
 
 func DeleteAccelPlan(id int) error {
@@ -155,6 +193,7 @@ func GetAccelPlanByGroup(groupName string) (*AccelPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan.FillPriceUSD()
 	return &plan, nil
 }
 
@@ -167,6 +206,7 @@ func GetUserAccelSub(userId int) (*UserAccelSub, error) {
 	if err != nil {
 		return nil, err
 	}
+	sub.FillPriceUSD()
 	return &sub, nil
 }
 
@@ -202,6 +242,8 @@ func CountAccelSubs(status string) (int64, error) {
 type AccelSubRow struct {
 	UserAccelSub
 	Username string `json:"username" gorm:"column:username"`
+	// PlanName 套餐名（套餐已删除时为空），管理端列表要显示「买的哪个套餐」。
+	PlanName string `json:"plan_name" gorm:"column:plan_name"`
 }
 
 func ListAccelSubs(offset, limit int) ([]AccelSubRow, int64, error) {
@@ -210,13 +252,17 @@ func ListAccelSubs(offset, limit int) ([]AccelSubRow, int64, error) {
 		limit = 50
 	}
 	err := DB.Table("user_accel_subs AS s").
-		Select("s.*, u.username AS username").
+		Select("s.*, u.username AS username, COALESCE(p.name, '') AS plan_name").
 		Joins("LEFT JOIN users AS u ON u.id = s.user_id").
+		Joins("LEFT JOIN accel_plans AS p ON p.id = s.plan_id").
 		Order("s.expire_at DESC, s.id DESC").
 		Offset(offset).Limit(limit).
 		Scan(&rows).Error
 	if err != nil {
 		return nil, 0, err
+	}
+	for i := range rows {
+		rows[i].FillPriceUSD()
 	}
 	var total int64
 	if err := DB.Model(&UserAccelSub{}).Count(&total).Error; err != nil {

@@ -32,7 +32,10 @@ export interface LotteryPrize {
   id: string
   name: string
   type: 'quota' | 'none'
+  /** 奖品额度（内部计费口径，页面不要直接展示）。 */
   quota: number
+  /** 奖品金额的美元报价；管理端只填这个，quota 由服务端换算。 */
+  quota_usd?: number
   weight: number
 }
 
@@ -43,8 +46,10 @@ export interface LotterySettings {
   prizes: LotteryPrize[]
   /** 付费抽奖开关：关闭时用户只能用每日免费次数。 */
   paid_enabled: boolean
-  /** 单次付费抽奖价格（额度，只扣付费余额）。 */
+  /** 单次付费抽奖价格（额度，内部计费口径）。 */
   paid_price: number
+  /** 单次付费抽奖价格的美元报价，页面展示与输入都用这个。 */
+  paid_price_usd: number
   /** 每日付费抽奖次数上限（与免费次数分开计）。 */
   paid_daily_limit: number
 }
@@ -61,6 +66,8 @@ export interface LotteryStatus {
   quota: number
   /** 付费余额（quota - free_quota），付费抽奖只认这个数。 */
   paid_quota: number
+  /** 付费余额的美元报价（页面展示口径）。 */
+  paid_quota_usd: number
   /** 现在能不能付费抽一次，后端算好，前端直接用。 */
   paid_affordable: boolean
   qq_bound: boolean

@@ -2,6 +2,8 @@ package controller
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,27 +22,63 @@ import (
 // 管理端负责套餐 CRUD 与订阅查看，护栏都在 service.ValidateAccelPlanGroup。
 
 type accelSubscriptionView struct {
-	Id              int    `json:"id"`
-	PlanId          int    `json:"plan_id"`
-	PlanName        string `json:"plan_name"`
-	GroupName       string `json:"group_name"`
-	StartAt         int64  `json:"start_at"`
-	ExpireAt        int64  `json:"expire_at"`
-	AutoRenew       bool   `json:"auto_renew"`
-	Status          string `json:"status"`
-	Active          bool   `json:"active"`
-	DaysLeft        int    `json:"days_left"`
-	PricePerMonth   int64  `json:"price_per_month"`
-	TotalCharged    int64  `json:"total_charged"`
-	LastChargeError string `json:"last_charge_error"`
+	Id              int     `json:"id"`
+	PlanId          int     `json:"plan_id"`
+	PlanName        string  `json:"plan_name"`
+	GroupName       string  `json:"group_name"`
+	StartAt         int64   `json:"start_at"`
+	ExpireAt        int64   `json:"expire_at"`
+	AutoRenew       bool    `json:"auto_renew"`
+	Status          string  `json:"status"`
+	Active          bool    `json:"active"`
+	DaysLeft        int     `json:"days_left"`
+	PricePerMonth   int64   `json:"price_per_month"`
+	PriceUSD        float64 `json:"price_usd"`
+	TotalCharged    int64   `json:"total_charged"`
+	TotalChargedUSD float64 `json:"total_charged_usd"`
+	LastChargeError string  `json:"last_charge_error"`
+	UserId          int     `json:"user_id,omitempty"`
+	Username        string  `json:"username,omitempty"`
+}
+
+type accelLimitsView struct {
+	MaxPriceUSD    float64 `json:"max_price_usd"`
+	PriceStepUSD   float64 `json:"price_step_usd"`
+	MaxConcurrency int     `json:"max_concurrency"`
+	MaxExtendDays  int     `json:"max_extend_days"`
 }
 
 type accelUserView struct {
-	Plans        []model.AccelPlan      `json:"plans"`
-	Subscription *accelSubscriptionView `json:"subscription"`
-	UserGroup    string                 `json:"user_group"`
-	PaidBalance  int64                  `json:"paid_balance"`
-	ServerTime   int64                  `json:"server_time"`
+	Plans          []model.AccelPlan      `json:"plans"`
+	Subscription   *accelSubscriptionView `json:"subscription"`
+	UserGroup      string                 `json:"user_group"`
+	PaidBalance    int64                  `json:"paid_balance"`
+	PaidBalanceUSD float64                `json:"paid_balance_usd"`
+	// Usage 本期用量（当前订阅周期内），TodayUsage 今日用量。
+	// 两者都按分组从消费日志聚合，没有订阅时为 nil。
+	Usage      *model.AccelUsage `json:"usage"`
+	TodayUsage *model.AccelUsage `json:"today_usage"`
+	Limits     accelLimitsView   `json:"limits"`
+	ServerTime int64             `json:"server_time"`
+}
+
+// accelPlanName 取套餐名用于订阅视图；套餐已删除时返回空串，
+// 前端会退化成显示分组名。
+func accelPlanName(planId int) string {
+	if planId <= 0 {
+		return ""
+	}
+	plan, err := model.GetAccelPlanById(planId)
+	if err != nil || plan == nil {
+		return ""
+	}
+	return plan.Name
+}
+
+// accelTodayStart 返回本地时区今日 0 点的时间戳。
+func accelTodayStart() int64 {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 }
 
 func buildAccelSubscriptionView(sub *model.UserAccelSub, planNames map[int]string) *accelSubscriptionView {
@@ -50,7 +88,7 @@ func buildAccelSubscriptionView(sub *model.UserAccelSub, planNames map[int]strin
 	now := time.Now().Unix()
 	daysLeft := 0
 	if sub.ExpireAt > now {
-		daysLeft = int((sub.ExpireAt-now+86399)/86400) // 向上取整，剩 1 小时也算 1 天
+		daysLeft = int((sub.ExpireAt - now + 86399) / 86400) // 向上取整，剩 1 小时也算 1 天
 	}
 	return &accelSubscriptionView{
 		Id:              sub.Id,
@@ -64,8 +102,11 @@ func buildAccelSubscriptionView(sub *model.UserAccelSub, planNames map[int]strin
 		Active:          sub.Active(now),
 		DaysLeft:        daysLeft,
 		PricePerMonth:   sub.PricePerMonth,
+		PriceUSD:        sub.PriceUSD,
 		TotalCharged:    sub.TotalCharged,
+		TotalChargedUSD: sub.TotalChargedUSD,
 		LastChargeError: sub.LastChargeError,
+		UserId:          sub.UserId,
 	}
 }
 
@@ -109,27 +150,50 @@ func GetAccelOverview(c *gin.Context) {
 	if paidBalance < 0 {
 		paidBalance = 0
 	}
-	common.ApiSuccess(c, accelUserView{
-		Plans:        plans,
-		Subscription: buildAccelSubscriptionView(sub, planNames),
-		UserGroup:    user.Group,
-		PaidBalance:  paidBalance,
-		ServerTime:   time.Now().Unix(),
-	})
+	view := accelUserView{
+		Plans:          plans,
+		Subscription:   buildAccelSubscriptionView(sub, planNames),
+		UserGroup:      user.Group,
+		PaidBalance:    paidBalance,
+		PaidBalanceUSD: common.RoundUSD(common.QuotaToUSD(paidBalance)),
+		Limits: accelLimitsView{
+			MaxPriceUSD:    service.AccelMaxPriceUSD(),
+			PriceStepUSD:   service.AccelPriceStepUSD,
+			MaxConcurrency: service.AccelMaxConc,
+			MaxExtendDays:  service.AccelMaxExtendDays,
+		},
+		ServerTime: time.Now().Unix(),
+	}
+	if sub != nil {
+		since := sub.StartAt
+		if since <= 0 {
+			since = sub.ExpireAt - model.AccelPeriodSeconds
+		}
+		if usage, usageErr := model.GetAccelUsage(userId, sub.GroupName, since); usageErr == nil {
+			view.Usage = &usage
+		}
+		if today, todayErr := model.GetAccelUsage(userId, sub.GroupName, accelTodayStart()); todayErr == nil {
+			view.TodayUsage = &today
+		}
+	}
+	common.ApiSuccess(c, view)
 }
 
-// SubscribeAccel 开通或重新开通加速套餐（扣付费余额）。
+// SubscribeAccel 开通 / 换套餐（扣付费余额）。
+// body: {plan_id, switch}；switch=true 表示「生效中换套餐」，会作废剩余时长，
+// 由前端二次确认后传。
 func SubscribeAccel(c *gin.Context) {
 	userId := c.GetInt("id")
 	var req struct {
-		PlanId int `json:"plan_id"`
+		PlanId int  `json:"plan_id"`
+		Switch bool `json:"switch"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
 		common.ApiErrorStatus(c, http.StatusBadRequest,
 			common.NewMessage("invalid request body"), gin.H{"code": "INVALID_REQUEST"})
 		return
 	}
-	sub, err := service.SubscribeAccelPlan(userId, req.PlanId)
+	sub, err := service.SubscribeAccelPlan(userId, req.PlanId, req.Switch)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrAccelPlanNotFound):
@@ -157,7 +221,7 @@ func SubscribeAccel(c *gin.Context) {
 		common.NewMessage("Subscribed acceleration group {{group}}", map[string]any{
 			"group": sub.GroupName,
 		}))
-	common.ApiSuccess(c, buildAccelSubscriptionView(sub, map[int]string{sub.PlanId: ""}))
+	common.ApiSuccess(c, buildAccelSubscriptionView(sub, map[int]string{sub.PlanId: accelPlanName(sub.PlanId)}))
 }
 
 // UpdateAccelAutoRenew 开关自动续费；关闭后到期自然失效，不做按天退款。
@@ -193,13 +257,16 @@ func AdminListAccelPlans(c *gin.Context) {
 }
 
 type accelPlanRequest struct {
-	Name          string `json:"name"`
-	GroupName     string `json:"group_name"`
-	PricePerMonth int64  `json:"price_per_month"`
-	Concurrency   int    `json:"concurrency"`
-	Description   string `json:"description"`
-	Enabled       *bool  `json:"enabled"`
-	SortOrder     int    `json:"sort_order"`
+	Name      string `json:"name"`
+	GroupName string `json:"group_name"`
+	// PriceUSD 是唯一对外的报价入口：管理端只填美元，额度由服务端换算。
+	// PricePerMonth 保留兼容（旧前端/脚本仍可能直接传额度）。
+	PriceUSD      *float64 `json:"price_usd"`
+	PricePerMonth int64    `json:"price_per_month"`
+	Concurrency   int      `json:"concurrency"`
+	Description   string   `json:"description"`
+	Enabled       *bool    `json:"enabled"`
+	SortOrder     int      `json:"sort_order"`
 }
 
 func (req *accelPlanRequest) validate() error {
@@ -208,8 +275,16 @@ func (req *accelPlanRequest) validate() error {
 	if req.Name == "" || len(req.Name) > 64 {
 		return errors.New("name is required and must be within 64 characters")
 	}
+	if req.PriceUSD != nil {
+		usd := *req.PriceUSD
+		maxUSD := service.AccelMaxPriceUSD()
+		if math.IsNaN(usd) || math.IsInf(usd, 0) || usd < 0 || usd > maxUSD {
+			return fmt.Errorf("price must be between 0 and %.2f USD", maxUSD)
+		}
+		req.PricePerMonth = common.USDToQuota(usd)
+	}
 	if req.PricePerMonth < 0 || req.PricePerMonth > service.AccelMaxPrice {
-		return errors.New("price_per_month out of range")
+		return fmt.Errorf("price must be between 0 and %.2f USD", service.AccelMaxPriceUSD())
 	}
 	if req.Concurrency < 0 || req.Concurrency > service.AccelMaxConc {
 		return errors.New("concurrency out of range")
@@ -326,6 +401,63 @@ func AdminListAccelSubs(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(rows)
 	common.ApiSuccess(c, pageInfo)
+}
+
+// AdminExtendAccelSub 售后补时长：不扣费，直接把到期时间往后推。
+// 用于「用户反馈线路故障，补 3 天」这类场景，避免绕到数据库里手改。
+func AdminExtendAccelSub(c *gin.Context) {
+	var req struct {
+		UserId int `json:"user_id"`
+		Days   int `json:"days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserId <= 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest,
+			common.NewMessage("invalid request body"), gin.H{"code": "INVALID_REQUEST"})
+		return
+	}
+	if req.Days == 0 {
+		req.Days = 30
+	}
+	sub, err := service.ExtendAccelSubscription(req.UserId, req.Days)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAccelNoSubscription):
+			common.ApiErrorStatus(c, http.StatusNotFound,
+				common.NewMessage("acceleration subscription not found"),
+				gin.H{"code": "ACCEL_NO_SUBSCRIPTION"})
+		case errors.Is(err, service.ErrAccelInvalidDays):
+			common.ApiErrorStatus(c, http.StatusBadRequest,
+				common.NewMessage("extend days out of range"), gin.H{"code": "INVALID_REQUEST"})
+		default:
+			common.ApiError(c, err)
+		}
+		return
+	}
+	common.ApiSuccess(c, buildAccelSubscriptionView(sub, map[int]string{sub.PlanId: accelPlanName(sub.PlanId)}))
+}
+
+// AdminRevokeAccelSub 强制停用（违规/退款/风控）。只改状态，不自动退款。
+func AdminRevokeAccelSub(c *gin.Context) {
+	var req struct {
+		UserId int    `json:"user_id"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserId <= 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest,
+			common.NewMessage("invalid request body"), gin.H{"code": "INVALID_REQUEST"})
+		return
+	}
+	if err := service.RevokeAccelSubscription(req.UserId, req.Reason); err != nil {
+		if errors.Is(err, service.ErrAccelNoSubscription) {
+			common.ApiErrorStatus(c, http.StatusNotFound,
+				common.NewMessage("acceleration subscription not found"),
+				gin.H{"code": "ACCEL_NO_SUBSCRIPTION"})
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"user_id": req.UserId, "status": model.AccelSubStatusExpired})
 }
 
 func parseAccelIdParam(c *gin.Context, name string) (int, error) {

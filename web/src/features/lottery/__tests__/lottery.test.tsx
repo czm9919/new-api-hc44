@@ -43,6 +43,7 @@ const statusPayload = {
     require_qq: true,
     paid_enabled: false,
     paid_price: 5000,
+    paid_price_usd: 0.01,
     paid_daily_limit: 5,
     prizes: [
       { id: 'thanks', name: '谢谢参与', type: 'none', quota: 0, weight: 40 },
@@ -51,6 +52,7 @@ const statusPayload = {
         name: '500 额度',
         type: 'quota',
         quota: 500,
+        quota_usd: 0.001,
         weight: 60,
       },
     ],
@@ -61,6 +63,7 @@ const statusPayload = {
   paid_spins_remaining: 0,
   quota: 0,
   paid_quota: 0,
+  paid_quota_usd: 0,
   paid_affordable: false,
   qq_bound: false,
   qq: '',
@@ -240,7 +243,7 @@ describe('LotteryPage', () => {
     // 测试环境 resources 为空，t('You won {{prize}}') 会带着插值原样返回，
     // 所以用正则匹配前缀，避免依赖具体翻译文案。
     expect(screen.getByText(/You won/)).toBeInTheDocument()
-    expect(screen.getAllByText(/\+500/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/\+\$0\.001/).length).toBeGreaterThan(0)
   })
 
   it('issues a one-time bind code when the user is not bound', async () => {
@@ -282,7 +285,7 @@ describe('LotteryPage', () => {
 
     expect(await screen.findByText('Recent spins')).toBeInTheDocument()
     // 记录行里的额度增量（奖品名在转盘/奖池/记录三处出现，用增量文案断言）
-    expect(screen.getAllByText(/\+500/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/\+\$0\.001/).length).toBeGreaterThan(0)
   })
 
   it('only shows the paid button when the site enables paid spins', async () => {

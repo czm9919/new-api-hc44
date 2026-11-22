@@ -17,19 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /*
- * 加速专线（/accel，hc48）。
+ * 加速专线（/accel，hc48 / hc49）。
  *
- * 页面四块：
- *  1. 状态卡：未开通 / 生效中剩 N 天 / 已到期，附付费余额
- *  2. 套餐卡：价格、并发、开通按钮（余额不足直接禁用并说明原因）
- *  3. 使用指引：分组名怎么填到令牌上（复制），以及「一个专用令牌」的建议
- *  4. 管理端：套餐 CRUD（仅管理员可见）
+ * 页面五块：
+ *  1. 状态卡：未开通 / 生效中（剩余天数、进度条、到期提醒）、本期与今日用量
+ *  2. 套餐卡：美元报价、并发、开通 / 换套餐（换套餐会作废剩余时长，需二次确认）
+ *  3. 使用指引：分组名怎么填到令牌上（复制）
+ *  4. 管理端：套餐 CRUD（美元输入）
+ *  5. 管理端：订阅列表（补时长 / 强制停用）
  *
- * 注意：这个页面只负责「卖」，能不能用加速分组最终由后端 TokenAuth 判定，
- * 前端隐藏按钮不构成任何限制。
+ * 价格一律用美元：后端返回 price_usd / total_charged_usd / paid_balance_usd，
+ * 额度字段只用于内部计费，前端不再自己换算。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Gauge, Rocket, ShieldCheck, Trash2, Zap } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Gauge,
+  Rocket,
+  ShieldCheck,
+  Trash2,
+  TrendingUp,
+  Zap,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -65,33 +76,66 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { formatCurrencyUSD, formatTimestampToDate } from '@/lib/format'
 
 import {
   createAccelPlan,
   deleteAccelPlan,
+  extendAccelSub,
   getAccelOverview,
   listAccelPlans,
+  listAccelSubs,
+  revokeAccelSub,
   setAccelAutoRenew,
   subscribeAccel,
   updateAccelPlan,
+  type AccelLimits,
   type AccelPlan,
   type AccelPlanInput,
   type AccelSubscription,
+  type AccelSubRow,
+  type AccelUsage,
 } from './api'
+
+const DEFAULT_LIMITS: AccelLimits = {
+  max_price_usd: 200,
+  price_step_usd: 0.01,
+  max_concurrency: 1000,
+  max_extend_days: 3650,
+}
 
 const EMPTY_FORM: AccelPlanInput = {
   name: '',
   group_name: '',
-  price_per_month: 0,
+  price_usd: 0,
   concurrency: 0,
   description: '',
   enabled: true,
   sort_order: 0,
+}
+
+/** 剩余天数占比，用于进度条；延长过时长的订阅可能超过 100%，夹紧到 100。 */
+function remainingPercent(subscription: AccelSubscription): number {
+  const now = Date.now() / 1000
+  const total = subscription.expire_at - subscription.start_at
+  if (total <= 0) {
+    return 0
+  }
+  const left = Math.max(0, subscription.expire_at - now)
+  return Math.min(100, Math.max(0, (left / total) * 100))
+}
+
+function daysLeftFromExpire(expireAt: number): number {
+  const now = Date.now() / 1000
+  if (expireAt <= now) {
+    return 0
+  }
+  return Math.ceil((expireAt - now) / 86400)
 }
 
 function GroupChip({ group }: { group: string }) {
@@ -108,14 +152,57 @@ function GroupChip({ group }: { group: string }) {
   )
 }
 
-function SubscriptionCard({
-  subscription,
-  paidBalance,
-  userGroup,
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className='rounded-md border px-3 py-2'>
+      <div className='text-muted-foreground text-xs'>{label}</div>
+      <div className='mt-0.5 text-sm font-medium tabular-nums'>{value}</div>
+    </div>
+  )
+}
+
+function UsageGrid({
+  usage,
+  todayUsage,
 }: {
-  subscription: AccelSubscription | null
-  paidBalance: number
-  userGroup: string
+  usage: AccelUsage | null
+  todayUsage: AccelUsage | null
+}) {
+  const { t } = useTranslation()
+  const period = usage
+  const today = todayUsage
+  return (
+    <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
+      <StatCell
+        label={t('Requests this period')}
+        value={String(period?.requests ?? 0)}
+      />
+      <StatCell
+        label={t('Spend this period')}
+        value={formatCurrencyUSD(period?.quota_usd ?? 0)}
+      />
+      <StatCell
+        label={t('Requests today')}
+        value={String(today?.requests ?? 0)}
+      />
+      <StatCell
+        label={t('Spend today')}
+        value={formatCurrencyUSD(today?.quota_usd ?? 0)}
+      />
+    </div>
+  )
+}
+
+function ActiveSubscriptionCard({
+  subscription,
+  paidBalanceUSD,
+  usage,
+  todayUsage,
+}: {
+  subscription: AccelSubscription
+  paidBalanceUSD: number
+  usage: AccelUsage | null
+  todayUsage: AccelUsage | null
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -130,40 +217,15 @@ function SubscriptionCard({
     },
   })
 
-  if (!subscription) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <ShieldCheck className='size-4' />
-            {t('Not subscribed')}
-          </CardTitle>
-          <CardDescription>
-            {t(
-              'Pick a plan below to unlock the dedicated line. You currently use the {{group}} group.',
-              { group: userGroup || 'default' }
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className='text-muted-foreground text-sm'>
-            {t('Paid balance')}:{' '}
-            <span className='text-foreground font-medium'>
-              {formatQuota(paidBalance)}
-            </span>{' '}
-            · {t('Monthly fee is charged from paid balance only')}
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
   const expired = !subscription.active
+  const expiringSoon = !expired && subscription.days_left <= 3
   return (
     <Card className={expired ? 'border-destructive/40' : 'border-primary/30'}>
       <CardHeader className='gap-1'>
         <div className='flex flex-wrap items-center gap-2'>
-          <CardTitle className='text-base'>{subscription.plan_name}</CardTitle>
+          <CardTitle className='text-base'>
+            {subscription.plan_name || subscription.group_name}
+          </CardTitle>
           {expired ? (
             <Badge variant='destructive'>{t('Expired')}</Badge>
           ) : (
@@ -176,24 +238,55 @@ function SubscriptionCard({
             time: formatTimestampToDate(subscription.expire_at),
           })}
           {' · '}
-          {t('Renewed every 30 days')}
+          {formatCurrencyUSD(subscription.price_usd)} {'/ 30 '}
+          {t('days')}
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-3'>
-        <div className='text-sm'>
-          {t('Paid balance')}:{' '}
-          <span className='font-medium'>{formatQuota(paidBalance)}</span>
-          {' · '}
-          {t('Monthly fee')}:{' '}
-          <span className='font-medium'>
-            {formatQuota(subscription.price_per_month)}
-          </span>
-        </div>
+        {expired ? null : (
+          <div className='space-y-1'>
+            <Progress value={remainingPercent(subscription)} className='w-full' />
+            <div className='text-muted-foreground flex justify-between text-xs'>
+              <span>
+                {t('Started at {{time}}', {
+                  time: formatTimestampToDate(subscription.start_at),
+                })}
+              </span>
+              <span>
+                {t('Paid balance')}: {formatCurrencyUSD(paidBalanceUSD)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {expiringSoon ? (
+          <div className='flex items-start gap-2 rounded-md border border-amber-400/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200'>
+            <AlertTriangle className='mt-0.5 size-3.5 shrink-0' />
+            <span>
+              {subscription.auto_renew
+                ? t(
+                    'Expires in {{days}} days. Auto renew will charge {{amount}} from your paid balance.',
+                    {
+                      days: subscription.days_left,
+                      amount: formatCurrencyUSD(subscription.price_usd),
+                    }
+                  )
+                : t(
+                    'Expires in {{days}} days and auto renew is off. The line stops when it expires.',
+                    { days: subscription.days_left }
+                  )}
+            </span>
+          </div>
+        ) : null}
+
         {subscription.last_charge_error ? (
           <p className='text-destructive text-sm'>
             {subscription.last_charge_error}
           </p>
         ) : null}
+
+        <UsageGrid usage={usage} todayUsage={todayUsage} />
+
         <div className='flex items-center justify-between rounded-md border px-3 py-2'>
           <div className='space-y-0.5'>
             <div className='text-sm font-medium'>{t('Auto renew')}</div>
@@ -207,6 +300,50 @@ function SubscriptionCard({
             onCheckedChange={(checked) => mutation.mutate(!!checked)}
           />
         </div>
+
+        <div className='text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs'>
+          <span>
+            {t('Total charged')}: {formatCurrencyUSD(subscription.total_charged_usd)}
+          </span>
+          <span>
+            {t('Monthly fee')}: {formatCurrencyUSD(subscription.price_usd)}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function EmptySubscriptionCard({
+  paidBalanceUSD,
+  userGroup,
+}: {
+  paidBalanceUSD: number
+  userGroup: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <ShieldCheck className='size-4' />
+          {t('Not subscribed')}
+        </CardTitle>
+        <CardDescription>
+          {t(
+            'Pick a plan below to unlock the dedicated line. You currently use the {{group}} group.',
+            { group: userGroup || 'default' }
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className='text-muted-foreground text-sm'>
+          {t('Paid balance')}:{' '}
+          <span className='text-foreground font-medium'>
+            {formatCurrencyUSD(paidBalanceUSD)}
+          </span>{' '}
+          · {t('Monthly fee is charged from paid balance only')}
+        </div>
       </CardContent>
     </Card>
   )
@@ -214,22 +351,30 @@ function SubscriptionCard({
 
 function PlanCard({
   plan,
-  paidBalance,
+  paidBalanceUSD,
   active,
-  onSubscribe,
+  switching,
   pending,
+  onSubscribe,
 }: {
   plan: AccelPlan
-  paidBalance: number
+  paidBalanceUSD: number
   active: boolean
-  onSubscribe: (planId: number) => void
+  switching: boolean
   pending: boolean
+  onSubscribe: (plan: AccelPlan) => void
 }) {
   const { t } = useTranslation()
-  const affordable = paidBalance >= plan.price_per_month
-  const disabled = active || pending || !affordable
+  const affordable = paidBalanceUSD + 1e-9 >= plan.price_usd
+  const disabled = pending || !affordable || (active && !switching)
+  let actionLabel = t('Subscribe')
+  if (active) {
+    actionLabel = t('Current plan')
+  } else if (switching) {
+    actionLabel = t('Switch to this plan')
+  }
   return (
-    <Card className='flex flex-col'>
+    <Card className={active ? 'border-primary/40 flex flex-col' : 'flex flex-col'}>
       <CardHeader className='gap-1'>
         <CardTitle className='flex items-center gap-2 text-base'>
           <Zap className='size-4' />
@@ -239,7 +384,7 @@ function PlanCard({
       </CardHeader>
       <CardContent className='flex flex-1 flex-col justify-between gap-3'>
         <div className='text-2xl font-medium'>
-          {formatQuota(plan.price_per_month)}
+          {formatCurrencyUSD(plan.price_usd)}
           <span className='text-muted-foreground ml-1 text-xs font-normal'>
             / 30 {t('days')}
           </span>
@@ -259,13 +404,19 @@ function PlanCard({
         <Button
           className='w-full'
           disabled={disabled}
-          onClick={() => onSubscribe(plan.id)}
+          variant={active ? 'secondary' : 'default'}
+          onClick={() => onSubscribe(plan)}
         >
-          {active ? t('Current plan') : t('Subscribe')}
+          {actionLabel}
         </Button>
         {!affordable && !active ? (
           <p className='text-muted-foreground text-xs'>
             {t('Top up your paid balance to subscribe')}
+          </p>
+        ) : null}
+        {switching && !active ? (
+          <p className='text-muted-foreground text-xs'>
+            {t('Switching charges the full monthly fee and resets the 30-day period')}
           </p>
         ) : null}
       </CardContent>
@@ -277,10 +428,12 @@ function PlanFormDialog({
   open,
   onOpenChange,
   plan,
+  limits,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   plan: AccelPlan | null
+  limits: AccelLimits
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -291,7 +444,7 @@ function PlanFormDialog({
       ? {
           name: plan.name,
           group_name: plan.group_name,
-          price_per_month: plan.price_per_month,
+          price_usd: plan.price_usd,
           concurrency: plan.concurrency,
           description: plan.description,
           enabled: plan.enabled,
@@ -352,12 +505,15 @@ function PlanFormDialog({
           </div>
           <div className='grid grid-cols-2 gap-3'>
             <div className='grid gap-1.5'>
-              <Label>{t('Monthly fee (quota)')}</Label>
+              <Label>{t('Monthly fee (USD)')}</Label>
               <Input
                 type='number'
-                value={form.price_per_month}
+                min={0}
+                max={limits.max_price_usd}
+                step={limits.price_step_usd}
+                value={form.price_usd}
                 onChange={(event) =>
-                  patch({ price_per_month: Number(event.target.value) || 0 })
+                  patch({ price_usd: Number(event.target.value) || 0 })
                 }
               />
             </div>
@@ -365,6 +521,8 @@ function PlanFormDialog({
               <Label>{t('Concurrency (0 = unlimited)')}</Label>
               <Input
                 type='number'
+                min={0}
+                max={limits.max_concurrency}
                 value={form.concurrency}
                 onChange={(event) =>
                   patch({ concurrency: Number(event.target.value) || 0 })
@@ -403,7 +561,7 @@ function PlanFormDialog({
   )
 }
 
-function AdminPlansSection() {
+function AdminPlansSection({ limits }: { limits: AccelLimits }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<AccelPlan | null>(null)
@@ -419,7 +577,7 @@ function AdminPlansSection() {
       updateAccelPlan(plan.id, {
         name: plan.name,
         group_name: plan.group_name,
-        price_per_month: plan.price_per_month,
+        price_usd: plan.price_usd,
         concurrency: plan.concurrency,
         description: plan.description,
         enabled: !plan.enabled,
@@ -475,10 +633,12 @@ function AdminPlansSection() {
                 )}
               </div>
               <div className='text-muted-foreground text-xs'>
-                {formatQuota(plan.price_per_month)} / 30 {t('days')}
+                {formatCurrencyUSD(plan.price_usd)} / 30 {t('days')}
                 {' · '}
                 {plan.concurrency > 0
-                  ? t('{{count}} concurrent requests', { count: plan.concurrency })
+                  ? t('{{count}} concurrent requests', {
+                      count: plan.concurrency,
+                    })
                   : t('Unlimited concurrency')}
               </div>
             </div>
@@ -538,7 +698,213 @@ function AdminPlansSection() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         plan={editing}
+        limits={limits}
       />
+    </Card>
+  )
+}
+
+function AdminSubsSection() {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [page, setPage] = useState(1)
+  const [revoking, setRevoking] = useState<AccelSubRow | null>(null)
+  const [reason, setReason] = useState('')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['accel-admin-subs', page],
+    queryFn: () => listAccelSubs(page, 20),
+  })
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['accel-admin-subs'] })
+    void queryClient.invalidateQueries({ queryKey: ['accel'] })
+  }
+
+  const extendMutation = useMutation({
+    mutationFn: (userId: number) => extendAccelSub(userId, 30),
+    onSuccess: () => {
+      toast.success(t('30 days added'))
+      refresh()
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error))
+    },
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: (userId: number) => revokeAccelSub(userId, reason),
+    onSuccess: () => {
+      toast.success(t('Subscription revoked'))
+      setRevoking(null)
+      setReason('')
+      refresh()
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : String(error))
+    },
+  })
+
+  const total = data?.total ?? 0
+  const pageSize = data?.page_size || 20
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const now = Date.now() / 1000
+
+  return (
+    <Card>
+      <CardHeader className='flex flex-row items-start justify-between gap-3'>
+        <div className='space-y-1'>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <TrendingUp className='size-4' />
+            {t('Subscriptions')}
+          </CardTitle>
+          <CardDescription>
+            {t(
+              'Extend for support cases; revoke stops access immediately and does not refund.'
+            )}
+          </CardDescription>
+        </div>
+        <Badge variant='outline'>
+          {t('{{count}} total', { count: total })}
+        </Badge>
+      </CardHeader>
+      <CardContent className='space-y-2'>
+        {isLoading ? <Skeleton className='h-20 w-full' /> : null}
+        {!isLoading && (data?.items ?? []).length === 0 ? (
+          <p className='text-muted-foreground text-sm'>
+            {t('Nobody has subscribed yet')}
+          </p>
+        ) : null}
+        {(data?.items ?? []).map((row) => {
+          const active = row.status === 'active' && row.expire_at > now
+          const days = daysLeftFromExpire(row.expire_at)
+          return (
+            <div
+              key={row.user_id}
+              className='flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2'
+            >
+              <div className='min-w-0 space-y-0.5'>
+                <div className='flex flex-wrap items-center gap-2 text-sm font-medium'>
+                  <span className='truncate'>{row.username || `#${row.user_id}`}</span>
+                  <Badge variant='outline'>{row.plan_name || row.group_name}</Badge>
+                  {active ? (
+                    <Badge>{t('{{days}} days left', { days })}</Badge>
+                  ) : (
+                    <Badge variant='destructive'>{t('Expired')}</Badge>
+                  )}
+                  {row.auto_renew ? null : (
+                    <Badge variant='secondary'>{t('Auto renew off')}</Badge>
+                  )}
+                </div>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Expires at {{time}}', {
+                    time: formatTimestampToDate(row.expire_at),
+                  })}
+                  {' · '}
+                  {formatCurrencyUSD(row.price_usd)} / 30 {t('days')}
+                  {' · '}
+                  {t('Total charged')}: {formatCurrencyUSD(row.total_charged_usd)}
+                </div>
+                {row.last_charge_error ? (
+                  <div className='text-destructive text-xs'>
+                    {row.last_charge_error}
+                  </div>
+                ) : null}
+              </div>
+              <div className='flex items-center gap-2'>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  disabled={extendMutation.isPending}
+                  onClick={() => extendMutation.mutate(row.user_id)}
+                >
+                  +30 {t('days')}
+                </Button>
+                <Button
+                  size='sm'
+                  variant='ghost'
+                  disabled={!active || revokeMutation.isPending}
+                  onClick={() => {
+                    setRevoking(row)
+                    setReason('')
+                  }}
+                >
+                  {t('Revoke')}
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+        {pageCount > 1 ? (
+          <div className='flex items-center justify-between pt-1'>
+            <span className='text-muted-foreground text-xs'>
+              {page} / {pageCount}
+            </span>
+            <div className='flex gap-2'>
+              <Button
+                size='sm'
+                variant='outline'
+                disabled={page <= 1}
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              >
+                {t('Previous')}
+              </Button>
+              <Button
+                size='sm'
+                variant='outline'
+                disabled={page >= pageCount}
+                onClick={() => setPage((prev) => prev + 1)}
+              >
+                {t('Next')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+
+      <Dialog
+        open={revoking !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRevoking(null)
+          }
+        }}
+      >
+        <DialogContent className='sm:max-w-md'>
+          <DialogHeader>
+            <DialogTitle>{t('Revoke this subscription?')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Access stops immediately. No refund is issued automatically; handle the money manually.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-1.5'>
+            <Label>{t('Reason (shown to the user)')}</Label>
+            <Input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder={t('Revoked by admin')}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setRevoking(null)}>
+              {t('Cancel')}
+            </Button>
+            <Button
+              variant='destructive'
+              disabled={revokeMutation.isPending}
+              onClick={() => {
+                if (revoking) {
+                  revokeMutation.mutate(revoking.user_id)
+                }
+              }}
+            >
+              {t('Revoke')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
@@ -579,6 +945,7 @@ export function AccelPage() {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
   const queryClient = useQueryClient()
+  const [switchTarget, setSwitchTarget] = useState<AccelPlan | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['accel'],
@@ -587,9 +954,11 @@ export function AccelPage() {
   })
 
   const subscribeMutation = useMutation({
-    mutationFn: subscribeAccel,
-    onSuccess: () => {
-      toast.success(t('Subscribed'))
+    mutationFn: (vars: { planId: number; switchPlan: boolean }) =>
+      subscribeAccel(vars.planId, vars.switchPlan),
+    onSuccess: (_, vars) => {
+      toast.success(vars.switchPlan ? t('Plan switched') : t('Subscribed'))
+      setSwitchTarget(null)
       void queryClient.invalidateQueries({ queryKey: ['accel'] })
     },
     onError: (error: unknown) => {
@@ -599,9 +968,19 @@ export function AccelPage() {
   })
 
   const subscription = data?.subscription ?? null
-  const paidBalance = data?.paid_balance ?? 0
+  const paidBalanceUSD = data?.paid_balance_usd ?? 0
   const plans = data?.plans ?? []
+  const limits = data?.limits ?? DEFAULT_LIMITS
+  const isActive = subscription?.active === true
   const lockedGroup = subscription ? subscription.group_name : plans[0]?.group_name
+
+  const handleSubscribe = (plan: AccelPlan) => {
+    if (isActive && subscription && subscription.plan_id !== plan.id) {
+      setSwitchTarget(plan)
+      return
+    }
+    subscribeMutation.mutate({ planId: plan.id, switchPlan: false })
+  }
 
   return (
     <SectionPageLayout>
@@ -609,10 +988,17 @@ export function AccelPage() {
       <SectionPageLayout.Content>
         <div className='space-y-4'>
           {isLoading ? <Skeleton className='h-32 w-full' /> : null}
-          {!isLoading ? (
-            <SubscriptionCard
+          {!isLoading && subscription ? (
+            <ActiveSubscriptionCard
               subscription={subscription}
-              paidBalance={paidBalance}
+              paidBalanceUSD={paidBalanceUSD}
+              usage={data?.usage ?? null}
+              todayUsage={data?.today_usage ?? null}
+            />
+          ) : null}
+          {!isLoading && !subscription ? (
+            <EmptySubscriptionCard
+              paidBalanceUSD={paidBalanceUSD}
               userGroup={data?.user_group ?? ''}
             />
           ) : null}
@@ -623,22 +1009,57 @@ export function AccelPage() {
                 <PlanCard
                   key={plan.id}
                   plan={plan}
-                  paidBalance={paidBalance}
-                  active={
-                    subscription?.active === true &&
-                    subscription.group_name === plan.group_name
-                  }
+                  paidBalanceUSD={paidBalanceUSD}
+                  active={isActive && subscription?.plan_id === plan.id}
+                  switching={isActive && subscription?.plan_id !== plan.id}
                   pending={subscribeMutation.isPending}
-                  onSubscribe={(planId) => subscribeMutation.mutate(planId)}
+                  onSubscribe={handleSubscribe}
                 />
               ))}
             </div>
           ) : null}
 
           {lockedGroup ? <UsageGuide group={lockedGroup} /> : null}
-          {isAdmin ? <AdminPlansSection /> : null}
+          {isAdmin ? <AdminPlansSection limits={limits} /> : null}
+          {isAdmin ? <AdminSubsSection /> : null}
         </div>
       </SectionPageLayout.Content>
+
+      <AlertDialog
+        open={switchTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSwitchTarget(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Switch to this plan?')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'You will be charged {{amount}} right now and a new 30-day period starts. The remaining days on your current plan are forfeited.',
+                { amount: formatCurrencyUSD(switchTarget?.price_usd ?? 0) }
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (switchTarget) {
+                  subscribeMutation.mutate({
+                    planId: switchTarget.id,
+                    switchPlan: true,
+                  })
+                }
+              }}
+            >
+              {t('Confirm switch')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SectionPageLayout>
   )
 }
