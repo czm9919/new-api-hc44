@@ -59,6 +59,7 @@ import {
   type KeyPoolSettings,
 } from '@/features/key-pool/api'
 
+import { AccelLineCard } from './accel-line-card'
 import { BalanceDisplayCard } from './balance-display-card'
 import { CustomHeadCard } from './custom-head-card'
 import { LabCard } from './lab-card'
@@ -319,6 +320,9 @@ export function EnhancedSettings() {
 
           {/* 自研实验室展示页（/lab）：纯展示 + 求赞助，与主站业务零关联 */}
           <LabCard />
+
+          {/* 加速专线（hc50）：入站加速域名 + 线路展示口径，独立保存 */}
+          <AccelLineCard />
 
           {!settings ? (
             <Skeleton className='h-64 w-full' />

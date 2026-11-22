@@ -8247,6 +8247,18 @@
     "Prize value must be greater than 0": "奖品金额必须大于 0",
     "Prize value must be at most {{max}} USD": "奖品金额不能超过 {{max}} 美元",
     "e.g. $0.01 bonus": "例如 $0.01 奖励",
-    "This spin cost {{cost}}": "本次花费 {{cost}}"
+    "This spin cost {{cost}}": "本次花费 {{cost}}",
+    "Accelerated entry point": "加速接入地址",
+    "Use this domain instead of the default one to get inbound acceleration. It is the same API, only the host changes.": "把这个域名替换掉默认域名即可走接入加速。接口完全一致，只有域名不同。",
+    "Line status": "线路状态",
+    "Live health of the exits under your group. Success rate and latency are measured on this node.": "你所在分组下出口线路的实时健康度。成功率与延迟由当前节点实测。",
+    "Line status is hidden by the operator.": "运营已关闭线路状态展示。",
+    "No line is bound to this group yet.": "这个分组下还没有绑定线路。",
+    "Every line under this group is unavailable right now. Please retry later.": "该分组下所有线路当前都不可用，请稍后重试。",
+    "Lines": "线路",
+    "Lines in group {{group}}": "「{{group}}」分组的线路",
+    "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.": "绑定到该分组的渠道（含已停用）。出口地址与密钥不会对外暴露。",
+    "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.": "并发当前在进程内计数：多实例部署时每个实例都会各放一份上限。配置 Redis 后可共享同一配额。",
+    "{{count}} in flight": "{{count}} 个在途"
   }
 }

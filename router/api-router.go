@@ -210,6 +210,7 @@ func SetApiRouter(router *gin.Engine) {
 				// 加速专线（hc48）：套餐列表 + 我的订阅 + 开通 + 自动续费开关。
 				// 真正决定「能不能用加速分组」的逻辑在 TokenAuth 里，这里只管售卖。
 				selfRoute.GET("/accel", controller.GetAccelOverview)
+				selfRoute.GET("/accel/lines", controller.GetAccelLines)
 				selfRoute.POST("/accel/subscribe", middleware.UserCriticalRateLimit("accel-subscribe"), controller.SubscribeAccel)
 				selfRoute.POST("/accel/auto_renew", controller.UpdateAccelAutoRenew)
 
@@ -249,6 +250,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/accel/plans/:id", controller.AdminUpdateAccelPlan)
 				adminRoute.DELETE("/accel/plans/:id", controller.AdminDeleteAccelPlan)
 				adminRoute.GET("/accel/subscriptions", controller.AdminListAccelSubs)
+				// 线路查询与用户端共用 /accel/lines：带 ?group= 时要求管理员角色，
+				// 单独开一条 admin 路由会和 selfRoute 撞同一个 path+method。
 				adminRoute.POST("/accel/subscriptions/extend", controller.AdminExtendAccelSub)
 				adminRoute.POST("/accel/subscriptions/revoke", controller.AdminRevokeAccelSub)
 				// QQ 机器人接入配置（v1.1.0 M2）：服务令牌 + 免费模型门禁开关。

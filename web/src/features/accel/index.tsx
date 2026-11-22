@@ -87,14 +87,19 @@ import {
   createAccelPlan,
   deleteAccelPlan,
   extendAccelSub,
+  getAccelLines,
   getAccelOverview,
+  listAccelLines,
   listAccelPlans,
   listAccelSubs,
   revokeAccelSub,
   setAccelAutoRenew,
   subscribeAccel,
   updateAccelPlan,
+  type AccelIngress,
   type AccelLimits,
+  type AccelLine,
+  type AccelLinesResponse,
   type AccelPlan,
   type AccelPlanInput,
   type AccelSubscription,
@@ -566,6 +571,7 @@ function AdminPlansSection({ limits }: { limits: AccelLimits }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<AccelPlan | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [linesGroup, setLinesGroup] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['accel-admin-plans'],
@@ -650,6 +656,13 @@ function AdminPlansSection({ limits }: { limits: AccelLimits }) {
               <Button
                 size='sm'
                 variant='outline'
+                onClick={() => setLinesGroup(plan.group_name)}
+              >
+                {t('Lines')}
+              </Button>
+              <Button
+                size='sm'
+                variant='outline'
                 onClick={() => {
                   setEditing(plan)
                   setDialogOpen(true)
@@ -699,6 +712,10 @@ function AdminPlansSection({ limits }: { limits: AccelLimits }) {
         onOpenChange={setDialogOpen}
         plan={editing}
         limits={limits}
+      />
+      <AdminLinesDialog
+        group={linesGroup}
+        onClose={() => setLinesGroup(null)}
       />
     </Card>
   )
@@ -941,6 +958,254 @@ function UsageGuide({ group }: { group: string }) {
   )
 }
 
+// ---------------------------------------------------------------- 入站加速地址
+//
+// 入站加速（DCDN）在基础设施侧配置，代码侧唯一能做的是把「该用哪个域名」
+// 明确告诉用户。管理员没填 ingress_host 时整块不渲染，不留空壳。
+function IngressCard({ ingress }: { ingress: AccelIngress }) {
+  const { t } = useTranslation()
+  const { copyToClipboard } = useCopyToClipboard()
+  if (!ingress.host) {
+    return null
+  }
+  return (
+    <Card>
+      <CardHeader className='gap-1'>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Zap className='size-4' />
+          {t('Accelerated entry point')}
+        </CardTitle>
+        <CardDescription>
+          {t(
+            'Use this domain instead of the default one to get inbound acceleration. It is the same API, only the host changes.'
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <code className='bg-muted rounded px-2 py-1 text-sm'>
+            {ingress.base_url}
+          </code>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => void copyToClipboard(ingress.base_url)}
+          >
+            <Copy className='mr-1 size-3.5' />
+            {t('Copy')}
+          </Button>
+        </div>
+        <pre className='bg-muted text-muted-foreground overflow-x-auto rounded p-3 text-xs'>
+          {ingress.example}
+        </pre>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------- 线路状态
+//
+// 「线路」就是加速分组下的出口渠道。这里只展示名称/状态/健康度，
+// 不含出口地址与密钥 —— 用户能判断线路好坏，但拿不到可滥用的信息。
+function lineStatusLabel(
+  line: AccelLine,
+  t: (key: string) => string
+): string {
+  if (line.status !== 1) {
+    return line.status_text === 'auto_disabled'
+      ? t('Auto disabled')
+      : t('Offline')
+  }
+  if (line.cooling_down) {
+    return t('Cooling down')
+  }
+  if (line.degraded) {
+    return t('Degraded')
+  }
+  return t('Online')
+}
+
+function lineStatusVariant(
+  line: AccelLine
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (line.status !== 1 || line.degraded) {
+    return 'destructive'
+  }
+  if (line.cooling_down) {
+    return 'secondary'
+  }
+  return 'outline'
+}
+
+function LineRow({ line }: { line: AccelLine }) {
+  const { t } = useTranslation()
+  const successText = line.has_samples
+    ? `${Math.round(line.success_rate * 100)}%`
+    : '—'
+  const latencies = [
+    line.ttft_ms > 0
+      ? `${t('First token')} ${Math.round(line.ttft_ms)}ms`
+      : null,
+    line.latency_ms > 0 ? `${Math.round(line.latency_ms)}ms` : null,
+  ].filter(Boolean)
+  return (
+    <div className='flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2'>
+      <div className='min-w-0 space-y-0.5'>
+        <div className='flex items-center gap-2 text-sm font-medium'>
+          <span className='truncate'>{line.name || `#${line.channel_id}`}</span>
+          <Badge variant={lineStatusVariant(line)}>
+            {lineStatusLabel(line, t)}
+          </Badge>
+        </div>
+        <div className='text-muted-foreground text-xs'>
+          {t('Success rate')}: {successText}
+          {latencies.length > 0 ? ` · ${latencies.join(' · ')}` : ''}
+          {line.active > 0
+            ? ` · ${t('{{count}} in flight', { count: line.active })}`
+            : ''}
+        </div>
+      </div>
+      {line.models > 0 ? (
+        <span className='text-muted-foreground text-xs'>
+          {t('{{count}} models', { count: line.models })}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function LineList({ data }: { data: AccelLinesResponse }) {
+  const { t } = useTranslation()
+  const { summary, lines } = data
+  if (lines.length === 0) {
+    return (
+      <p className='text-muted-foreground text-sm'>
+        {t('No line is bound to this group yet.')}
+      </p>
+    )
+  }
+  return (
+    <div className='space-y-2'>
+      {summary.all_down ? (
+        <div className='border-destructive/50 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-sm'>
+          <AlertTriangle className='mt-0.5 size-4 shrink-0' />
+          <span>
+            {t(
+              'Every line under this group is unavailable right now. Please retry later.'
+            )}
+          </span>
+        </div>
+      ) : (
+        <div className='text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs'>
+          <span>
+            {t('Available')}: {summary.available}/{summary.total}
+          </span>
+          {summary.degraded > 0 ? (
+            <span className='text-destructive'>
+              {t('Degraded')}: {summary.degraded}
+            </span>
+          ) : null}
+          {summary.cooling_down > 0 ? (
+            <span>
+              {t('Cooling down')}: {summary.cooling_down}
+            </span>
+          ) : null}
+        </div>
+      )}
+      {lines.map((line) => (
+        <LineRow key={line.channel_id} line={line} />
+      ))}
+    </div>
+  )
+}
+
+function LinesSection({ group }: { group: string }) {
+  const { t } = useTranslation()
+  const { data, isLoading } = useQuery({
+    queryKey: ['accel-lines', group],
+    queryFn: getAccelLines,
+    refetchInterval: 60000,
+  })
+  return (
+    <Card>
+      <CardHeader className='gap-1'>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <TrendingUp className='size-4' />
+          {t('Line status')}
+        </CardTitle>
+        <CardDescription>
+          {t(
+            'Live health of the exits under your group. Success rate and latency are measured on this node.'
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? <Skeleton className='h-16 w-full' /> : null}
+        {!isLoading && data && !data.visible ? (
+          <p className='text-muted-foreground text-sm'>
+            {t('Line status is hidden by the operator.')}
+          </p>
+        ) : null}
+        {!isLoading && data && data.visible ? <LineList data={data} /> : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+// 管理端：按分组查全部线路（含已禁用），用于排查「用户说加速很慢」。
+function AdminLinesDialog({
+  group,
+  onClose,
+}: {
+  group: string | null
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const { data, isLoading } = useQuery({
+    queryKey: ['accel-admin-lines', group],
+    queryFn: () => listAccelLines(group ?? ''),
+    enabled: group !== null,
+  })
+  const memoryBackend = data?.slot_backend === 'memory'
+  return (
+    <Dialog
+      open={group !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose()
+        }
+      }}
+    >
+      <DialogContent className='sm:max-w-2xl'>
+        <DialogHeader>
+          <DialogTitle>
+            {t('Lines in group {{group}}', { group: group ?? '' })}
+          </DialogTitle>
+          <DialogDescription>
+            {t(
+              'Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.'
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {isLoading ? <Skeleton className='h-24 w-full' /> : null}
+        {!isLoading && data ? <LineList data={data} /> : null}
+        {memoryBackend ? (
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.'
+            )}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button variant='outline' onClick={onClose}>
+            {t('Close')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function AccelPage() {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
@@ -1020,6 +1285,8 @@ export function AccelPage() {
           ) : null}
 
           {lockedGroup ? <UsageGuide group={lockedGroup} /> : null}
+          {subscription ? <LinesSection group={subscription.group_name} /> : null}
+          {data?.ingress ? <IngressCard ingress={data.ingress} /> : null}
           {isAdmin ? <AdminPlansSection limits={limits} /> : null}
           {isAdmin ? <AdminSubsSection /> : null}
         </div>

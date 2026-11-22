@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -116,5 +117,22 @@ func TestValidateAccelPlanGroup(t *testing.T) {
 func TestChargePaidBalanceRejectsOutOfRange(t *testing.T) {
 	if _, err := chargePaidBalance(1, AccelMaxPrice+1); err == nil {
 		t.Fatal("price above AccelMaxPrice must be rejected")
+	}
+}
+
+// hc50：未配置 Redis 时必须明确降级为进程内计数，并让接口能如实上报后端，
+// 否则多实例部署时运维会误以为并发上限已经跨实例生效。
+func TestAccelSlotBackendFallsBackToMemory(t *testing.T) {
+	if common.RedisSlotAvailable() {
+		t.Skip("redis is available in this environment")
+	}
+	if got := AccelSlotBackend(); got != "memory" {
+		t.Fatalf("AccelSlotBackend() = %q, want memory", got)
+	}
+	if _, ok := AcquireAccelSlot(900003, 1); !ok {
+		t.Fatal("fallback path must still grant the first slot")
+	}
+	if _, ok := AcquireAccelSlot(900003, 1); ok {
+		t.Fatal("fallback path must still enforce the limit")
 	}
 }

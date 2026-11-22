@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,6 +49,14 @@ type accelLimitsView struct {
 	MaxExtendDays  int     `json:"max_extend_days"`
 }
 
+// accelIngressView 入站加速接入信息。Host 为空表示管理员还没配 DCDN 域名，
+// 前端应整块隐藏而不是显示一个空地址。
+type accelIngressView struct {
+	Host    string `json:"host"`
+	BaseURL string `json:"base_url"`
+	Example string `json:"example"`
+}
+
 type accelUserView struct {
 	Plans          []model.AccelPlan      `json:"plans"`
 	Subscription   *accelSubscriptionView `json:"subscription"`
@@ -59,7 +68,36 @@ type accelUserView struct {
 	Usage      *model.AccelUsage `json:"usage"`
 	TodayUsage *model.AccelUsage `json:"today_usage"`
 	Limits     accelLimitsView   `json:"limits"`
-	ServerTime int64             `json:"server_time"`
+	// Ingress 入站加速接入地址（hc50），未配置时 host 为空。
+	Ingress accelIngressView `json:"ingress"`
+	// SlotBackend 并发计数后端：redis（多实例共享）/ memory（进程内）。
+	SlotBackend string `json:"slot_backend"`
+	ServerTime  int64  `json:"server_time"`
+}
+
+// buildAccelIngress 把配置的域名拼成可直接粘贴的接入地址。
+// 允许管理员填带协议头的写法（https://accel.example.com/），这里统一归一化，
+// 否则前端拼出来的示例会出现 https://https:// 这种低级错误。
+func buildAccelIngress(host string) accelIngressView {
+	cleaned := strings.TrimSpace(host)
+	if cleaned == "" {
+		return accelIngressView{}
+	}
+	cleaned = strings.TrimSuffix(cleaned, "/")
+	cleaned = strings.TrimPrefix(cleaned, "https://")
+	cleaned = strings.TrimPrefix(cleaned, "http://")
+	if cleaned == "" {
+		return accelIngressView{}
+	}
+	baseURL := "https://" + cleaned
+	return accelIngressView{
+		Host:    cleaned,
+		BaseURL: baseURL,
+		Example: "curl " + baseURL + "/v1/chat/completions \\\n" +
+			"  -H \"Authorization: Bearer sk-xxx\" \\\n" +
+			"  -H \"Content-Type: application/json\" \\\n" +
+			"  -d '{\"model\":\"gpt-4o-mini\",\"group\":\"accel\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'",
+	}
 }
 
 // accelPlanName 取套餐名用于订阅视图；套餐已删除时返回空串，
@@ -162,7 +200,9 @@ func GetAccelOverview(c *gin.Context) {
 			MaxConcurrency: service.AccelMaxConc,
 			MaxExtendDays:  service.AccelMaxExtendDays,
 		},
-		ServerTime: time.Now().Unix(),
+		Ingress:     buildAccelIngress(operation_setting.GetAccelSetting().IngressHost),
+		SlotBackend: service.AccelSlotBackend(),
+		ServerTime:  time.Now().Unix(),
 	}
 	if sub != nil {
 		since := sub.StartAt
@@ -458,6 +498,68 @@ func AdminRevokeAccelSub(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"user_id": req.UserId, "status": model.AccelSubStatusExpired})
+}
+
+// accelLinesView 线路状态视图。Visible=false 时前端整块不渲染
+// （进程刚重启、健康记忆冷启动，展示一片 0% 只会让用户以为线路坏了）。
+type accelLinesView struct {
+	Group       string                 `json:"group"`
+	Lines       []model.AccelLine      `json:"lines"`
+	Summary     model.AccelLineSummary `json:"summary"`
+	Visible     bool                   `json:"visible"`
+	SlotBackend string                 `json:"slot_backend"`
+	DegradedPct int                    `json:"degraded_percent"`
+}
+
+// buildAccelLinesView 聚合线路并按运营配置决定是否对用户可见。
+func buildAccelLinesView(group string, visible bool) accelLinesView {
+	setting := operation_setting.GetAccelSetting()
+	lines := model.CollectAccelLines(group, time.Now(), setting.LineDegradedRate, 5)
+	view := accelLinesView{
+		Group:       group,
+		Lines:       lines,
+		Summary:     model.SummarizeAccelLines(lines),
+		Visible:     visible && setting.LineDisplayEnabled,
+		SlotBackend: service.AccelSlotBackend(),
+		DegradedPct: setting.LineDegradedRate,
+	}
+	if view.Lines == nil {
+		view.Lines = []model.AccelLine{}
+	}
+	return view
+}
+
+// GetAccelLines 线路状态。
+//
+// 普通用户：只返回自己订阅分组下的线路（脱敏，无出口地址/密钥），
+// 没有生效订阅时返回空列表 + visible=false，前端提示「订阅后可见」。
+// 管理员：可带 ?group=xxx 查任意分组（含已禁用渠道），用于排查
+// 「用户说加速很慢」到底是哪条出口在拖。
+func GetAccelLines(c *gin.Context) {
+	userId := c.GetInt("id")
+	groupParam := strings.TrimSpace(c.Query("group"))
+	if groupParam != "" {
+		if c.GetInt("role") < common.RoleAdminUser {
+			common.ApiErrorStatus(c, http.StatusForbidden,
+				common.NewMessage("only admin can query other groups"), gin.H{"code": "FORBIDDEN"})
+			return
+		}
+		common.ApiSuccess(c, buildAccelLinesView(groupParam, true))
+		return
+	}
+	sub, err := service.GetActiveSubscription(userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if sub == nil || !sub.Active(time.Now().Unix()) {
+		common.ApiSuccess(c, accelLinesView{
+			Lines:       []model.AccelLine{},
+			SlotBackend: service.AccelSlotBackend(),
+		})
+		return
+	}
+	common.ApiSuccess(c, buildAccelLinesView(sub.GroupName, true))
 }
 
 func parseAccelIdParam(c *gin.Context, name string) (int, error) {

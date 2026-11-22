@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -73,8 +75,12 @@ var (
 	// 只有第一个真正扣费，其余直接读它写好的结果。
 	renewMu sync.Mutex
 	// inflight 记录每个用户当前在途的加速请求数（进程内计数）。
-	// 单实例部署足够；多实例需要换成 Redis 计数，见 P2。
+	// hc50 起优先走 Redis 原子槽位（多实例共享上限）；Redis 未配置或报错时
+	// 降级到这里，保证缓存故障不会把付费用户挡在门外。
 	inflight sync.Map // map[int]*int64
+	// slotWarnOnce 限频 Redis 槽位降级告警：Redis 抖动时每条请求都打日志会把
+	// 日志盘刷满，改成一分钟内最多一条。
+	slotWarnOnce atomic.Int64 // 上次告警的 unix 秒
 )
 
 func accelCacheGet(userId int) (*model.UserAccelSub, bool) {
@@ -432,12 +438,64 @@ func RevokeAccelSubscription(userId int, reason string) error {
 	return nil
 }
 
+// AccelSlotBackend 当前生效的并发计数后端：`redis` 表示多实例共享上限，
+// `memory` 表示进程内计数（单实例准确，多实例会各算各的）。
+func AccelSlotBackend() string {
+	if common.RedisSlotAvailable() {
+		return "redis"
+	}
+	return "memory"
+}
+
+// accelSlotKey Redis 里的并发槽位键。按用户维度计：套餐的并发上限是
+// 「单用户能同时开几个请求」，与分组/套餐无关，换套餐不该重置计数。
+func accelSlotKey(userId int) string {
+	return common.SlotKey("accel:slot", strconv.Itoa(userId))
+}
+
+// warnAccelSlotFallback 限频输出降级告警（每分钟最多一条）。
+// Redis 抖动时不能让每条 relay 请求都写一行日志。
+func warnAccelSlotFallback(err error) {
+	now := time.Now().Unix()
+	last := slotWarnOnce.Load()
+	if now-last < 60 {
+		return
+	}
+	if !slotWarnOnce.CompareAndSwap(last, now) {
+		return
+	}
+	common.SysError(common.LogText("accel slot: redis unavailable, fallback to in-process counter: %s", err.Error()))
+}
+
 // AcquireAccelSlot 取一个并发槽位；返回的 release 必须 defer 调用。
 // limit <= 0 表示不限并发，返回空释放函数。
+//
+// hc50：优先 Redis 原子槽位（多实例共享），Redis 未配置/报错时降级为进程内
+// 计数。注意降级后上限会变成「每实例 limit」，这正是降级应有的语义——
+// 宁可放宽也不能因为缓存故障把付费用户全部 429。
 func AcquireAccelSlot(userId int, limit int) (func(), bool) {
 	if limit <= 0 {
 		return func() {}, true
 	}
+	if common.RedisSlotAvailable() {
+		ok, err := common.RedisReserveSlot(accelSlotKey(userId), limit, accelSlotTTL())
+		if err == nil {
+			if !ok {
+				return nil, false
+			}
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					if relErr := common.RedisReleaseSlot(accelSlotKey(userId)); relErr != nil {
+						// 释放失败不阻断请求：TTL 兜底会把僵尸槽位自然收回。
+						common.SysError(common.LogText("accel slot: redis release failed: %s", relErr.Error()))
+					}
+				})
+			}, true
+		}
+		warnAccelSlotFallback(err)
+	}
+
 	var counter *int64
 	if v, ok := inflight.Load(userId); ok {
 		counter = v.(*int64)
@@ -454,6 +512,15 @@ func AcquireAccelSlot(userId int, limit int) (func(), bool) {
 	return func() {
 		once.Do(func() { atomic.AddInt64(counter, -1) })
 	}, true
+}
+
+// accelSlotTTL 槽位兜底存活时间，取自运营配置（默认 10 分钟）。
+func accelSlotTTL() time.Duration {
+	seconds := operation_setting.GetAccelSetting().SlotTTLSeconds
+	if seconds <= 0 {
+		seconds = 600
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // AccelPlanGroup 返回分组对应的启用套餐；没有套餐时返回 (nil, nil)。

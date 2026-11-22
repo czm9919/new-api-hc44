@@ -8213,6 +8213,18 @@
     "Prize value must be greater than 0": "Prize value must be greater than 0",
     "Prize value must be at most {{max}} USD": "Prize value must be at most {{max}} USD",
     "e.g. $0.01 bonus": "e.g. $0.01 bonus",
-    "This spin cost {{cost}}": "This spin cost {{cost}}"
+    "This spin cost {{cost}}": "This spin cost {{cost}}",
+    "Accelerated entry point": "Accelerated entry point",
+    "Use this domain instead of the default one to get inbound acceleration. It is the same API, only the host changes.": "Use this domain instead of the default one to get inbound acceleration. It is the same API, only the host changes.",
+    "Line status": "Line status",
+    "Live health of the exits under your group. Success rate and latency are measured on this node.": "Live health of the exits under your group. Success rate and latency are measured on this node.",
+    "Line status is hidden by the operator.": "Line status is hidden by the operator.",
+    "No line is bound to this group yet.": "No line is bound to this group yet.",
+    "Every line under this group is unavailable right now. Please retry later.": "Every line under this group is unavailable right now. Please retry later.",
+    "Lines": "Lines",
+    "Lines in group {{group}}": "Lines in group {{group}}",
+    "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.": "Channels bound to this group, including disabled ones. Exit addresses and keys are never exposed.",
+    "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.": "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.",
+    "{{count}} in flight": "{{count}} in flight"
   }
 }

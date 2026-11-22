@@ -84,6 +84,14 @@ export interface AccelSubscription {
   last_charge_error: string
 }
 
+/** 入站加速接入地址（hc50）。host 为空表示管理员还没配，整块隐藏。 */
+export interface AccelIngress {
+  host: string
+  base_url: string
+  /** 可直接粘贴的 curl 示例，含 group 参数。 */
+  example: string
+}
+
 export interface AccelOverview {
   plans: AccelPlan[]
   subscription: AccelSubscription | null
@@ -98,7 +106,51 @@ export interface AccelOverview {
   /** 今日用量；未订阅为 null。 */
   today_usage: AccelUsage | null
   limits: AccelLimits
+  ingress: AccelIngress
+  /** 并发计数后端：redis 为多实例共享上限，memory 仅单实例准确。 */
+  slot_backend: 'redis' | 'memory' | string
   server_time: number
+}
+
+/** 一条加速线路（就是一个绑了专线出口的渠道，已脱敏）。 */
+export interface AccelLine {
+  channel_id: number
+  name: string
+  status: number
+  /** enabled / disabled / auto_disabled / unknown */
+  status_text: string
+  priority: number
+  weight: number
+  /** 该线路覆盖的模型数，0 表示不限（all）。 */
+  models: number
+  has_samples: boolean
+  success_rate: number
+  samples: number
+  ttft_ms: number
+  latency_ms: number
+  cooling_down: boolean
+  active: number
+  /** 样本充足且成功率低于阈值。 */
+  degraded: boolean
+}
+
+export interface AccelLineSummary {
+  total: number
+  available: number
+  degraded: number
+  cooling_down: number
+  /** 分组下所有线路都不可用（不等于没有线路）。 */
+  all_down: boolean
+}
+
+export interface AccelLinesResponse {
+  group: string
+  lines: AccelLine[]
+  summary: AccelLineSummary
+  /** 用户端是否允许展示（管理员可整体关闭，或进程刚重启无样本）。 */
+  visible: boolean
+  slot_backend: string
+  degraded_percent: number
 }
 
 export interface AccelPlanInput {
@@ -222,4 +274,16 @@ export async function revokeAccelSub(
     reason,
   })
   requireServerSuccess(res.data)
+}
+
+/** 我的线路状态（脱敏：无出口地址、无密钥）。未订阅时返回空列表。 */
+export async function getAccelLines(): Promise<AccelLinesResponse> {
+  const res = await api.get('/api/user/accel/lines')
+  return requireServerSuccess(res.data)?.data
+}
+
+/** 管理端：按分组看全部线路（含已禁用）。 */
+export async function listAccelLines(group: string): Promise<AccelLinesResponse> {
+  const res = await api.get('/api/user/accel/lines', { params: { group } })
+  return requireServerSuccess(res.data)?.data
 }
