@@ -430,6 +430,8 @@ func migrateDB() error {
 		&ModelNotice{},
 		&QQBindCode{},
 		&LotterySpin{},
+		&AccelPlan{},
+		&UserAccelSub{},
 	)
 	if err != nil {
 		return err

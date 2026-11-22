@@ -658,8 +658,16 @@ func TokenAuth() func(c *gin.Context) {
 		userGroup := userCache.Group
 		tokenGroup := token.Group
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+			// hc48：在静态可用分组之外，按订阅动态放行加速专线分组。
+			// 这里是唯一可信的拦截点 —— token.Group 是用户随手能改的字段，
+			// 只在 UI 上隐藏入口等于没有限制。
+			if !service.UserCanUseGroup(token.UserId, userGroup, tokenGroup) {
+				// 受套餐保护的分组统一回「需要订阅」，比「无权限」更能指向下一步动作；
+				// 其余分组维持原来的通用提示。
+				if plan, planErr := service.AccelPlanGroup(tokenGroup); planErr == nil && plan != nil {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAccelSubscriptionRequired))
+					return
+				}
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": tokenGroup}))
 				return
 			}
@@ -709,6 +717,12 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			return
 		}
+		// hc48 加速专线：进来先占一个并发槽位，请求结束（含流式中断）时释放。
+		releaseAccel, allowed := EnterAccelChannel(c)
+		if !allowed {
+			return
+		}
+		defer releaseAccel()
 		c.Next()
 	}
 }

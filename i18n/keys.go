@@ -35,6 +35,11 @@ const (
 	MsgDistributorNoAvailableChannelTaskPlugin = "distributor.no_available_channel_task_plugin"
 	MsgDistributorInvalidParseModel            = "distributor.invalid_request_parse_model"
 
+	// hc48 加速专线：分组受套餐保护时的拒绝原因
+	MsgAccelSubscriptionRequired = "accel.subscription_required"
+	MsgAccelSubscriptionExpired  = "accel.subscription_expired"
+	MsgAccelConcurrencyLimit     = "accel.concurrency_limit"
+
 	MsgQuotaUserInsufficient             = "quota.user_insufficient"
 	MsgQuotaPreConsumeInsufficient       = "quota.pre_consume_insufficient"
 	MsgQuotaSubscriptionInsufficient     = "quota.subscription_insufficient"

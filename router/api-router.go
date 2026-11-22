@@ -207,6 +207,12 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/lottery/spin", middleware.CriticalRateLimit(), controller.SpinLottery)
 				selfRoute.GET("/lottery/records", controller.GetLotteryRecords)
 
+				// 加速专线（hc48）：套餐列表 + 我的订阅 + 开通 + 自动续费开关。
+				// 真正决定「能不能用加速分组」的逻辑在 TokenAuth 里，这里只管售卖。
+				selfRoute.GET("/accel", controller.GetAccelOverview)
+				selfRoute.POST("/accel/subscribe", middleware.UserCriticalRateLimit("accel-subscribe"), controller.SubscribeAccel)
+				selfRoute.POST("/accel/auto_renew", controller.UpdateAccelAutoRenew)
+
 				// QQ 绑定（v1.1.0 M2）：面板只生成一次性码，绑定动作在
 				// 配套 AstrBot 机器人侧完成（见 /api/qq/agent/verify）。
 				selfRoute.GET("/qq/bind", controller.GetQQBindStatus)
@@ -236,6 +242,13 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/lottery/settings", controller.AdminUpdateLotterySettings)
 				// 恢复默认奖池：运营手改坏了不用记原始 JSON
 				adminRoute.POST("/lottery/settings/reset", controller.AdminResetLotterySettings)
+				// 加速专线套餐（hc48）：分组必须已在「分组倍率」里配好，
+				// 且不能出现在「用户可用分组」中（否则等于对全员免费）。
+				adminRoute.GET("/accel/plans", controller.AdminListAccelPlans)
+				adminRoute.POST("/accel/plans", controller.AdminCreateAccelPlan)
+				adminRoute.PUT("/accel/plans/:id", controller.AdminUpdateAccelPlan)
+				adminRoute.DELETE("/accel/plans/:id", controller.AdminDeleteAccelPlan)
+				adminRoute.GET("/accel/subscriptions", controller.AdminListAccelSubs)
 				// QQ 机器人接入配置（v1.1.0 M2）：服务令牌 + 免费模型门禁开关。
 				// 单独一组接口，避免把令牌混进用户态 /api/user/lottery 响应。
 				adminRoute.GET("/lottery/qq/settings", controller.AdminGetQQAgentSettings)

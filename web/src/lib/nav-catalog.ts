@@ -222,6 +222,14 @@ export const NAV_CATALOG: NavCatalogGroup[] = [
         url: '/lottery',
         icon: Dices,
       },
+      {
+        // hc48 加速专线：按月付费解锁专用分组，出口走代理线路。
+        // 页面只负责售卖，分组放行由后端 TokenAuth 判定。
+        id: 'personal.accel',
+        titleKey: 'Acceleration',
+        url: '/accel',
+        icon: PlugZap,
+      },
     ],
   },
   {

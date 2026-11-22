@@ -88,7 +88,9 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						// hc48：playground 选分组同样要过订阅校验，否则网页端
+						// 传一个 group 参数就能绕过 token 上的限制。
+						if !service.UserCanUseGroup(c.GetInt("id"), usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}

@@ -36,6 +36,7 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedAccelIndexRouteImport } from './routes/_authenticated/accel/index'
 import { Route as AuthenticatedChannelHealthIndexRouteImport } from './routes/_authenticated/channel-health/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
@@ -220,6 +221,11 @@ const authUserResetRoute = authUserResetRouteImport.update({
   id: '/user/reset',
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
+} as any)
+const AuthenticatedAccelIndexRoute = AuthenticatedAccelIndexRouteImport.update({
+  id: '/accel/',
+  path: '/accel/',
+  getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedChannelHealthIndexRoute =
   AuthenticatedChannelHealthIndexRouteImport.update({
@@ -551,6 +557,7 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/usage-logs/statement': typeof AuthenticatedUsageLogsStatementRoute
+  '/accel/': typeof AuthenticatedAccelIndexRoute
   '/channel-health/': typeof AuthenticatedChannelHealthIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/consumption-rank/': typeof AuthenticatedConsumptionRankIndexRoute
@@ -627,6 +634,7 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/usage-logs/statement': typeof AuthenticatedUsageLogsStatementRoute
+  '/accel': typeof AuthenticatedAccelIndexRoute
   '/channel-health': typeof AuthenticatedChannelHealthIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/consumption-rank': typeof AuthenticatedConsumptionRankIndexRoute
@@ -707,6 +715,7 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/_authenticated/usage-logs/statement': typeof AuthenticatedUsageLogsStatementRoute
+  '/_authenticated/accel/': typeof AuthenticatedAccelIndexRoute
   '/_authenticated/channel-health/': typeof AuthenticatedChannelHealthIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/consumption-rank/': typeof AuthenticatedConsumptionRankIndexRoute
@@ -786,6 +795,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/usage-logs/statement'
+    | '/accel/'
     | '/channel-health/'
     | '/channels/'
     | '/consumption-rank/'
@@ -862,6 +872,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/usage-logs/statement'
+    | '/accel'
     | '/channel-health'
     | '/channels'
     | '/consumption-rank'
@@ -941,6 +952,7 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
     | '/_authenticated/usage-logs/statement'
+    | '/_authenticated/accel/'
     | '/_authenticated/channel-health/'
     | '/_authenticated/channels/'
     | '/_authenticated/consumption-rank/'
@@ -1197,6 +1209,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/user/reset'
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
+    }
+    '/_authenticated/accel/': {
+      id: '/_authenticated/accel/'
+      path: '/accel'
+      fullPath: '/accel/'
+      preLoaderRoute: typeof AuthenticatedAccelIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/channel-health/': {
       id: '/_authenticated/channel-health/'
@@ -1650,6 +1669,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
   AuthenticatedUsageLogsStatementRoute: typeof AuthenticatedUsageLogsStatementRoute
+  AuthenticatedAccelIndexRoute: typeof AuthenticatedAccelIndexRoute
   AuthenticatedChannelHealthIndexRoute: typeof AuthenticatedChannelHealthIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedConsumptionRankIndexRoute: typeof AuthenticatedConsumptionRankIndexRoute
@@ -1688,6 +1708,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
   AuthenticatedUsageLogsStatementRoute: AuthenticatedUsageLogsStatementRoute,
+  AuthenticatedAccelIndexRoute: AuthenticatedAccelIndexRoute,
   AuthenticatedChannelHealthIndexRoute: AuthenticatedChannelHealthIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedConsumptionRankIndexRoute:
