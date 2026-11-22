@@ -45,20 +45,16 @@ type accelCacheEntry struct {
 	at  time.Time
 }
 
-type accelPlanCacheEntry struct {
-	plan *model.AccelPlan
-	at   time.Time
-}
-
-const accelPlanCacheTTL = 30 * time.Second
-
 var (
 	accelCacheMu sync.RWMutex
 	accelCache   = make(map[int]accelCacheEntry)
-	// planCache 按分组缓存套餐：每个 relay 请求都要判断「这个分组是不是受保护的」，
-	// 不缓存等于每条请求多一次查库。改套餐后由管理端接口主动失效。
-	planCacheMu sync.RWMutex
-	planCache   = make(map[string]accelPlanCacheEntry)
+	// accelGroups 是「哪些分组受套餐保护」的内存快照。
+	// 每条 relay 请求都要判断一次，所以绝不能在这里查库：表不存在或 DB 抖动时
+	// 会把普通分组的请求一起打成 500。快照为空 = 没有任何分组受保护，全部放行；
+	// 真正的保护判定在 UserCanUseGroup（那里才查订阅）。
+	accelGroupsMu     sync.RWMutex
+	accelGroups       = map[string]*model.AccelPlan{}
+	accelGroupsLoaded bool
 	// renewMu 串行化惰性续费：同一时刻多个请求同时发现订阅过期时，
 	// 只有第一个真正扣费，其余直接读它写好的结果。
 	renewMu sync.Mutex
@@ -380,36 +376,54 @@ func AcquireAccelSlot(userId int, limit int) (func(), bool) {
 }
 
 // AccelPlanGroup 返回分组对应的启用套餐；没有套餐时返回 (nil, nil)。
-// 这是每条 relay 请求都会走的判断，所以带 30 秒缓存。
+// 只读内存快照，不查库 —— 这是每条 relay 请求都会走的判断。
 func AccelPlanGroup(groupName string) (*model.AccelPlan, error) {
 	if groupName == "" {
 		return nil, nil
 	}
-	planCacheMu.RLock()
-	entry, ok := planCache[groupName]
-	planCacheMu.RUnlock()
-	if ok && time.Since(entry.at) <= accelPlanCacheTTL {
-		return entry.plan, nil
-	}
-	plan, err := model.GetAccelPlanByGroup(groupName)
-	if errors.Is(err, model.ErrAccelPlanNotFound) {
-		plan = nil
-		err = nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	planCacheMu.Lock()
-	planCache[groupName] = accelPlanCacheEntry{plan: plan, at: time.Now()}
-	planCacheMu.Unlock()
+	ensureAccelGroups()
+	accelGroupsMu.RLock()
+	plan := accelGroups[groupName]
+	accelGroupsMu.RUnlock()
 	return plan, nil
 }
 
-// InvalidateAccelPlanCache 套餐配置变更后调用，避免最长 30 秒内仍按旧配置判断。
+// ensureAccelGroups 懒加载「受保护分组」快照。
+//   - 表还不存在（测试库/未迁移）：标记已加载但集合为空，放行所有分组；
+//   - 查库失败：同样降级为空集合，宁可这一次不拦，也不能把全站打成 500。
+//
+// 真正的拦截在 UserCanUseGroup：它按用户查订阅，失败时 fail-closed。
+func ensureAccelGroups() {
+	accelGroupsMu.RLock()
+	loaded := accelGroupsLoaded
+	accelGroupsMu.RUnlock()
+	if loaded {
+		return
+	}
+	accelGroupsMu.Lock()
+	defer accelGroupsMu.Unlock()
+	if accelGroupsLoaded {
+		return
+	}
+	plans := make([]model.AccelPlan, 0)
+	if model.AccelPlansTableReady() {
+		if result, err := model.ListAccelPlans(true); err == nil {
+			plans = result
+		}
+	}
+	groups := make(map[string]*model.AccelPlan, len(plans))
+	for i := range plans {
+		groups[plans[i].GroupName] = &plans[i]
+	}
+	accelGroups = groups
+	accelGroupsLoaded = true
+}
+
+// InvalidateAccelPlanCache 套餐配置变更后调用，下一次请求会重新加载分组快照。
 func InvalidateAccelPlanCache() {
-	planCacheMu.Lock()
-	planCache = make(map[string]accelPlanCacheEntry)
-	planCacheMu.Unlock()
+	accelGroupsMu.Lock()
+	accelGroupsLoaded = false
+	accelGroupsMu.Unlock()
 }
 
 // ValidateAccelPlanGroup 管理端建套餐时的护栏：

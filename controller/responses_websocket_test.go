@@ -187,6 +187,9 @@ func TestResponsesWSRequestRunnerRefreshesBillingContextAndCleansBody(t *testing
 }
 
 func TestResponsesWSRequestRunnerRejectsRevokedCredentials(t *testing.T) {
+	// 这条用例会走到 TokenAuth 的 403 分支，里面要调 i18n.T；
+	// 没有这一步时 localizer 为 nil，单独跑会直接 panic。
+	require.NoError(t, i18n.Init())
 	for _, tc := range []struct {
 		name   string
 		status int

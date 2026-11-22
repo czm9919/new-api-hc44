@@ -78,6 +78,17 @@ func (UserAccelSub) TableName() string {
 
 var ErrAccelPlanNotFound = errors.New("accel plan not found")
 
+// AccelPlansTableReady 判断加速相关两张表是否已建好。
+// 测试库或还没跑 AutoMigrate 的库直接查会报 no such table，
+// 调用方据此降级为「无套餐」，避免把普通请求打成 500。
+func AccelPlansTableReady() bool {
+	if DB == nil {
+		return false
+	}
+	migrator := DB.Migrator()
+	return migrator.HasTable(&AccelPlan{}) && migrator.HasTable(&UserAccelSub{})
+}
+
 // Active 订阅在给定时刻是否可用。只认 active + 未到期，
 // 不看 AutoRenew（关掉续费的用户在到期前都还能用）。
 func (sub *UserAccelSub) Active(now int64) bool {
