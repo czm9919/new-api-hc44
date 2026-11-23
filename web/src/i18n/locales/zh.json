@@ -8255,6 +8255,8 @@
     "Concurrency is counted in-process: with multiple instances each one allows the full limit. Configure Redis to share the limit.": "并发当前在进程内计数：多实例部署时每个实例都会各放一份上限。配置 Redis 后可共享同一配额。",
     "{{count}} in flight": "{{count}} 个在途",
     "Subscribe to an acceleration plan to unlock the accelerated entry point.": "订阅加速套餐后即可解锁加速接入地址。",
-    "Guard: {{allowed}} allowed / {{denied}} denied": "守卫：放行 {{allowed}} / 拦截 {{denied}}"
+    "Guard: {{allowed}} allowed / {{denied}} denied": "守卫：放行 {{allowed}} / 拦截 {{denied}}",
+    "Leave empty = same as the main site": "留空 = 与主站一致",
+    "Optional. Leave empty and the accelerated link dispatches exactly like the main site.": "可选。留空时加速链接的调度与主站完全一致。"
   }
 }

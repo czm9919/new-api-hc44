@@ -576,7 +576,9 @@ func GetAccelLines(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if sub == nil || !sub.Active(time.Now().Unix()) {
+	if sub == nil || !sub.Active(time.Now().Unix()) || sub.GroupName == "" {
+		// 没订阅、或套餐不绑分组（hc54：门牌模型，调度与主站一致，无专线渠道可言）：
+		// 线路卡片没有内容可展示，返回空列表让前端隐藏。
 		common.ApiSuccess(c, accelLinesView{
 			Lines:       []model.AccelLine{},
 			SlotBackend: service.AccelSlotBackend(),

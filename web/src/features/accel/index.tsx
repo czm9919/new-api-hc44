@@ -237,7 +237,7 @@ function ActiveSubscriptionCard({
           ) : (
             <Badge>{t('{{days}} days left', { days: subscription.days_left })}</Badge>
           )}
-          <GroupChip group={subscription.group_name} />
+          {subscription.group_name ? <GroupChip group={subscription.group_name} /> : null}
         </div>
         <CardDescription>
           {t('Expires at {{time}}', {
@@ -386,7 +386,7 @@ function PlanCard({
           <Zap className='size-4' />
           {plan.name}
         </CardTitle>
-        <CardDescription>{plan.description || plan.group_name}</CardDescription>
+        <CardDescription>{plan.description}</CardDescription>
       </CardHeader>
       <CardContent className='flex flex-1 flex-col justify-between gap-3'>
         <div className='text-2xl font-medium'>
@@ -402,10 +402,12 @@ function PlanCard({
               ? t('{{count}} concurrent requests', { count: plan.concurrency })
               : t('Unlimited concurrency')}
           </li>
-          <li className='flex items-center gap-2'>
-            <Rocket className='size-3.5' />
-            {t('Group')}: <GroupChip group={plan.group_name} />
-          </li>
+          {plan.group_name ? (
+            <li className='flex items-center gap-2'>
+              <Rocket className='size-3.5' />
+              {t('Group')}: <GroupChip group={plan.group_name} />
+            </li>
+          ) : null}
         </ul>
         <Button
           className='w-full'
@@ -506,8 +508,13 @@ function PlanFormDialog({
             <Input
               value={form.group_name}
               onChange={(event) => patch({ group_name: event.target.value })}
-              placeholder='accel'
+              placeholder={t('Leave empty = same as the main site')}
             />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Optional. Leave empty and the accelerated link dispatches exactly like the main site.'
+              )}
+            </p>
           </div>
           <div className='grid grid-cols-2 gap-3'>
             <div className='grid gap-1.5'>
@@ -556,7 +563,7 @@ function PlanFormDialog({
             {t('Cancel')}
           </Button>
           <Button
-            disabled={mutation.isPending || !form.name || !form.group_name}
+            disabled={mutation.isPending || !form.name}
             onClick={() => mutation.mutate()}
           >
             {t('Save')}

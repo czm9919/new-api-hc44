@@ -19,11 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 /*
  * 加速专线（hc48 / hc49）前端接口。
  *
- * 后端口径：
- *  - 套餐解锁的是「分组」，用户拿到 group_name 后要把它填到令牌的分组上；
+ * 后端口径（hc54 定位修正）：
+ *  - 加速链接 = 套了 CDN 的门牌：调度/渠道/计费与主站完全一致，订阅只是
+ *    「拿到专属链接」的门票。group_name 已是可选字段（留空 = 与主站一致），
+ *    旧套餐绑分组的逻辑保留兼容但不再是主路径；
  *  - 月费以**美元**报价（price_usd），只从付费余额扣，免费额度用不了；
  *  - 自动续费关闭后，到期前仍可用，到期自然失效，不做按天退款；
- *  - 用量（usage）按分组从消费日志聚合，是「这条线到底用了多少」的唯一来源。
+ *  - 用量（usage）从消费日志聚合：绑分组的套餐按分组统计，不绑分组统计全局。
  */
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'

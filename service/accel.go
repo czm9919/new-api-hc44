@@ -277,7 +277,8 @@ func SubscribeAccelPlan(userId, planId int, allowSwitch bool) (*model.UserAccelS
 	if !plan.Enabled {
 		return nil, ErrAccelPlanDisabled
 	}
-	if !ratio_setting.ContainsGroupRatio(plan.GroupName) {
+	// hc54 门牌模型：套餐可不绑分组（空 = 调度与主站一致），此时跳过分组校验。
+	if plan.GroupName != "" && !ratio_setting.ContainsGroupRatio(plan.GroupName) {
 		return nil, ErrAccelGroupMissing
 	}
 
@@ -660,12 +661,14 @@ func InvalidateAccelPlanCache() {
 }
 
 // ValidateAccelPlanGroup 管理端建套餐时的护栏：
+//   - hc54：分组改为可选——加速链接就是套 CDN 的门牌，调度与主站一致，
+//     套餐不绑定分组（空 = 全局一样）。填了分组则按老规则校验：
 //   - 分组必须在 ratio_setting 里配了倍率，否则请求会被判成已废弃分组；
 //   - 分组不能出现在「用户可用分组」里，否则等于对所有用户免费开放，
 //     套餐就卖不动了。
 func ValidateAccelPlanGroup(groupName string) error {
 	if groupName == "" {
-		return ErrAccelGroupMissing
+		return nil
 	}
 	if !ratio_setting.ContainsGroupRatio(groupName) {
 		return ErrAccelGroupMissing

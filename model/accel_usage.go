@@ -23,17 +23,21 @@ type AccelUsage struct {
 }
 
 // GetAccelUsage 统计某用户在指定分组、since（unix 秒）之后的消耗。
+// group 为空表示不绑定分组的套餐（hc54：加速链接与主站全局一致），
+// 此时统计该用户的全部消耗。
 // LOG_DB 未初始化（如单元测试）时返回零值而不是报错，页面显示 0 即可。
 func GetAccelUsage(userId int, group string, since int64) (AccelUsage, error) {
 	var usage AccelUsage
-	if LOG_DB == nil || userId <= 0 || group == "" {
+	if LOG_DB == nil || userId <= 0 {
 		return usage, nil
 	}
-	groupCol := logGroupColumn()
 	tx := LOG_DB.Table("logs").
 		Select("COUNT(*) AS requests, COALESCE(SUM(quota), 0) AS quota, "+
 			"COALESCE(MAX(created_at), 0) AS last_used_at").
-		Where("type = ? AND user_id = ? AND "+groupCol+" = ?", LogTypeConsume, userId, group)
+		Where("type = ? AND user_id = ?", LogTypeConsume, userId)
+	if group != "" {
+		tx = tx.Where(logGroupColumn()+" = ?", group)
+	}
 	if since > 0 {
 		tx = tx.Where("created_at >= ?", since)
 	}
