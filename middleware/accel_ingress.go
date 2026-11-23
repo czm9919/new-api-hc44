@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -198,8 +199,9 @@ func AccelIngressGuard() gin.HandlerFunc {
 		// 全局并发兜底（hc52 · ⑥）：所有订阅用户共享上限，域名被传播滥用时
 		// 损失封顶。挂在订阅校验之后——白嫖请求在这里已经全被 403，
 		// 槽位只服务真正的付费流量。
+		release := func() {}
 		if limit := operation_setting.GetAccelSetting().GlobalConcurrency; limit > 0 {
-			release, ok := service.AcquireGlobalAccelSlot(limit)
+			globalRelease, ok := service.AcquireGlobalAccelSlot(limit)
 			if !ok {
 				ingressDenied.Add(1)
 				common.SysLog(common.LogText(
@@ -215,20 +217,58 @@ func AccelIngressGuard() gin.HandlerFunc {
 				c.Abort()
 				return
 			}
-			ingressAllowed.Add(1)
-			common.SysLog(common.LogText(
-				"accel ingress allowed: user=%d prefix=%q ip=%s ua=%q",
-				prefixUserId, prefix, c.ClientIP(), c.Request.UserAgent()))
-			c.Next()
-			// c.Next() 返回 = relay handler 已完成（含流式写完），此刻释放。
-			release()
-			return
+			release = globalRelease
+		}
+
+		// 专属渠道生效点（hc53 修复）：请求进来时令牌/用户还是原分组
+		// （如 default），EnterAccelChannel 在 TokenAuth 阶段看到的也是旧
+		// 分组——守卫只验票不切分组的话，调度照样落普通渠道，「加速链接」
+		// 等于白给。这里把 UsingGroup 切到订阅绑定的分组，让 Distribute
+		// 用加速分组的渠道，并补占分组并发槽位。
+		prevGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if prevGroup != sub.GroupName {
+			plan, perr := service.AccelPlanGroup(sub.GroupName)
+			if perr != nil {
+				release()
+				reject("accel plan lookup failed: " + perr.Error())
+				return
+			}
+			if plan == nil {
+				release()
+				reject("subscription group has no accel plan")
+				return
+			}
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, sub.GroupName)
+			slotRelease, ok := service.AcquireAccelSlot(prefixUserId, plan.Concurrency)
+			if !ok {
+				release()
+				ingressDenied.Add(1)
+				common.SysLog(common.LogText(
+					"accel ingress plan limit: user=%d ip=%s concurrency=%d",
+					prefixUserId, c.ClientIP(), plan.Concurrency))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": gin.H{
+						"message": "加速线路当前繁忙，请稍后重试 (ACCEL_LINE_BUSY)",
+						"type":    "new_api_error",
+						"code":    "ACCEL_LINE_BUSY",
+					},
+				})
+				c.Abort()
+				return
+			}
+			prevRelease := release
+			release = func() {
+				slotRelease()
+				prevRelease()
+			}
 		}
 
 		ingressAllowed.Add(1)
 		common.SysLog(common.LogText(
-			"accel ingress allowed: user=%d prefix=%q ip=%s ua=%q",
-			prefixUserId, prefix, c.ClientIP(), c.Request.UserAgent()))
+			"accel ingress allowed: user=%d prefix=%q group=%q ip=%s ua=%q",
+			prefixUserId, prefix, sub.GroupName, c.ClientIP(), c.Request.UserAgent()))
 		c.Next()
+		// c.Next() 返回 = relay handler 已完成（含流式写完），此刻释放。
+		release()
 	}
 }
