@@ -7847,6 +7847,15 @@
     "By creating an account, you agree to our": "建立帳戶即表示您同意我們的",
     "Guard: {{allowed}} allowed / {{denied}} denied": "守衛：放行 {{allowed}} / 攔截 {{denied}}",
     "Leave empty = same as the main site": "留空 = 與主站一致",
-    "Optional. Leave empty and the accelerated link dispatches exactly like the main site.": "可選。留空時加速連結的調度與主站完全一致。"
+    "Optional. Leave empty and the accelerated link dispatches exactly like the main site.": "可選。留空時加速連結的調度與主站完全一致。",
+    "OpenAI-compatible Base URL (recommended)": "OpenAI 相容 Base URL（推薦）",
+    "Site root (for clients that append /v1 themselves)": "站點根位址（給自己拼 /v1 的用戶端）",
+    "The masked part is your personal access prefix — click Copy to get the full address.": "被打碼的部分是你的個人接入前綴，點擊複製可取得完整位址。",
+    "Accelerated entry point is not configured yet": "加速入口網域還沒設定",
+    "Fill in the acceleration domain in settings to hand out personal links to subscribers. Everything else (plans, subscriptions, watermark prefixes) is ready.": "到設定裡填好加速網域，就能給訂閱使用者下發專屬連結。套餐、訂閱、浮水印前綴都已經就緒。",
+    "Copy your personal accelerated address shown above (it carries your own prefix)": "複製上方顯示的專屬加速位址（裡面帶你的個人前綴）",
+    "Replace the base_url in your client with it — keep the same token, models and billing": "把用戶端裡的 base_url 換成它即可，令牌、模型、計費都不用動",
+    "The prefix inside the address is your watermark. Do not share it publicly; it expires with your subscription": "位址裡的前綴是你的專屬浮水印，不要公開分享；訂閱到期後自動失效",
+    "Acceleration is just a different entry domain. Dispatching, channels and billing stay exactly the same as the main site.": "加速只是換了一個入口網域，調度、通道、計費與主站完全一致。"
   }
 }

@@ -91,7 +91,10 @@ export interface AccelIngress {
   host: string
   /** hc52：个人水印前缀（8 位 hex），一人一份、泄露可溯源。订阅生效后才有。 */
   prefix?: string
+  /** 站点根地址（https://host/&lt;prefix&gt;），给需要自己拼 /v1 的客户端用。 */
   base_url: string
+  /** hc55：OpenAI 兼容口径（https://host/&lt;prefix&gt;/v1），给 SDK 直接填 base_url。 */
+  openai_base_url?: string
   /** 可直接粘贴的 curl 示例。 */
   example: string
   /** hc51：已配置加速域名但当前用户没有生效订阅——地址不下发，前端展示订阅引导。 */

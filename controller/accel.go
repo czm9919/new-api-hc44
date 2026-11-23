@@ -55,11 +55,16 @@ type accelLimitsView struct {
 // 生效订阅——域名是付费门槛（hc52 守卫会拦无订阅/前缀不匹配的请求），
 // 所以不下发地址。BaseURL 带个人水印前缀（hc52），一人一份、泄露可溯源。
 type accelIngressView struct {
-	Host    string `json:"host"`
-	Prefix  string `json:"prefix"`
+	Host   string `json:"host"`
+	Prefix string `json:"prefix"`
+	// BaseURL 站点根地址（https://host/<prefix>）。有些客户端会让你自己拼 /v1。
 	BaseURL string `json:"base_url"`
-	Example string `json:"example"`
-	Locked  bool   `json:"locked"`
+	// OpenAIBaseURL OpenAI 兼容口径（https://host/<prefix>/v1）。
+	// 绝大多数 SDK 的 base_url 都期望带上 /v1，单独给一条避免用户
+	// 把根地址直接填进去后请求落到 /chat/completions 上得到 404。
+	OpenAIBaseURL string `json:"openai_base_url"`
+	Example       string `json:"example"`
+	Locked        bool   `json:"locked"`
 }
 
 type accelUserView struct {
@@ -89,22 +94,30 @@ func buildAccelIngress(host string, prefix string) accelIngressView {
 		return accelIngressView{}
 	}
 	cleaned = strings.TrimSuffix(cleaned, "/")
+	// 协议以管理端填的为准：本地/IP 调试通常是 http，强制 https 只会
+	// 让用户拿到一个连不上的地址。没写协议时按 https（生产默认）。
+	scheme := "https://"
+	if strings.HasPrefix(cleaned, "http://") {
+		scheme = "http://"
+	}
 	cleaned = strings.TrimPrefix(cleaned, "https://")
 	cleaned = strings.TrimPrefix(cleaned, "http://")
 	if cleaned == "" {
 		return accelIngressView{}
 	}
-	baseURL := "https://" + cleaned
+	baseURL := scheme + cleaned
 	if prefix != "" {
 		// hc52：路径水印前缀。SDK 会把它当 base_url 的路径部分拼进请求，
 		// 服务端 rewrite 剥掉后走正常 relay 链路。
 		baseURL += "/" + prefix
 	}
+	openaiBase := baseURL + "/v1"
 	return accelIngressView{
-		Host:    cleaned,
-		Prefix:  prefix,
-		BaseURL: baseURL,
-		Example: "curl " + baseURL + "/v1/chat/completions \\\n" +
+		Host:          cleaned,
+		Prefix:        prefix,
+		BaseURL:       baseURL,
+		OpenAIBaseURL: openaiBase,
+		Example: "curl " + openaiBase + "/chat/completions \\\n" +
 			"  -H \"Authorization: Bearer sk-xxx\" \\\n" +
 			"  -H \"Content-Type: application/json\" \\\n" +
 			"  -d '{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'",

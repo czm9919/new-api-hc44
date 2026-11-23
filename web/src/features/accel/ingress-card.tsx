@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /*
- * 加速接入地址卡片（hc52）：加速页与 API Keys 页共用。
+ * 加速接入地址卡片（hc52，hc55 补 OpenAI 口径）。
+ *
+ * 加速链接 = 套了 CDN 的门牌：同一个站、同一套渠道、同一计费、同一调度，
+ * 用户只要把 base_url 换掉即可，令牌和模型都不用动。
  *
  * 防截图传播：域名明文显示（守卫会拦无订阅请求，域名本身不是凭证），
  * 个人水印前缀打码——前缀才是「一人一份」的凭证，只在点击复制时拿全量。
@@ -37,18 +40,53 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 
 import type { AccelIngress } from './api'
 
+/**
+ * 把地址里的水印前缀打码：`https://a.com/a3f2b91c/v1` → `https://a.com/a3f2•••• /v1`。
+ * 前缀不一定是最后一段（OpenAI 口径后面还有 /v1），所以按段找 8 位 hex。
+ */
 export function maskedBaseUrl(baseUrl: string): string {
-  const idx = baseUrl.lastIndexOf('/')
-  const scheme = 'https://'
-  if (idx <= scheme.length) return baseUrl
-  const prefix = baseUrl.slice(idx + 1)
-  if (prefix.length < 8) return baseUrl
-  return baseUrl.slice(0, idx + 1) + prefix.slice(0, 4) + '••••'
+  return baseUrl
+    .split('/')
+    .map((seg) =>
+      /^[0-9a-f]{8}$/i.test(seg) ? seg.slice(0, 4) + '••••' : seg
+    )
+    .join('/')
+}
+
+function UrlRow({
+  label,
+  hint,
+  value,
+}: {
+  label: string
+  hint?: string
+  value: string
+}) {
+  const { t } = useTranslation()
+  const { copyToClipboard } = useCopyToClipboard()
+  return (
+    <div className='space-y-1'>
+      <div className='text-muted-foreground text-xs font-medium'>{label}</div>
+      <div className='flex flex-wrap items-center gap-2'>
+        <code className='bg-muted max-w-full overflow-x-auto rounded px-2 py-1 text-sm'>
+          {maskedBaseUrl(value)}
+        </code>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={() => void copyToClipboard(value)}
+        >
+          <Copy className='mr-1 size-3.5' />
+          {t('Copy')}
+        </Button>
+      </div>
+      {hint ? <p className='text-muted-foreground text-xs'>{hint}</p> : null}
+    </div>
+  )
 }
 
 export function IngressCard({ ingress }: { ingress: AccelIngress }) {
   const { t } = useTranslation()
-  const { copyToClipboard } = useCopyToClipboard()
   // 未订阅：域名不下发（locked），只提示订阅后可用。
   if (ingress.locked && !ingress.host) {
     return (
@@ -70,6 +108,10 @@ export function IngressCard({ ingress }: { ingress: AccelIngress }) {
   if (!ingress.host) {
     return null
   }
+  const openaiBase = ingress.openai_base_url || `${ingress.base_url}/v1`
+  const maskHint = t(
+    'The masked part is your personal access prefix — click Copy to get the full address.'
+  )
   return (
     <Card>
       <CardHeader className='gap-1'>
@@ -83,20 +125,16 @@ export function IngressCard({ ingress }: { ingress: AccelIngress }) {
           )}
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='flex flex-wrap items-center gap-2'>
-          <code className='bg-muted rounded px-2 py-1 text-sm'>
-            {maskedBaseUrl(ingress.base_url)}
-          </code>
-          <Button
-            size='sm'
-            variant='outline'
-            onClick={() => void copyToClipboard(ingress.base_url)}
-          >
-            <Copy className='mr-1 size-3.5' />
-            {t('Copy')}
-          </Button>
-        </div>
+      <CardContent className='space-y-4'>
+        <UrlRow
+          label={t('OpenAI-compatible Base URL (recommended)')}
+          hint={maskHint}
+          value={openaiBase}
+        />
+        <UrlRow
+          label={t('Site root (for clients that append /v1 themselves)')}
+          value={ingress.base_url}
+        />
         <pre className='bg-muted text-muted-foreground overflow-x-auto rounded p-3 text-xs'>
           {ingress.example}
         </pre>

@@ -55,6 +55,7 @@ interface AccelForm {
   slotTTLSeconds: string
   lineDisplayEnabled: boolean
   lineDegradedRate: string
+  globalConcurrency: string
 }
 
 const EMPTY_FORM: AccelForm = {
@@ -62,18 +63,21 @@ const EMPTY_FORM: AccelForm = {
   slotTTLSeconds: '600',
   lineDisplayEnabled: true,
   lineDegradedRate: '50',
+  globalConcurrency: '0',
 }
 
 function parseForm(payload: unknown): AccelForm {
   const enabled = optionValueOf(payload, `${ACCEL_OPTION_PREFIX}line_display_enabled`)
   const ttl = optionValueOf(payload, `${ACCEL_OPTION_PREFIX}slot_ttl_seconds`)
   const rate = optionValueOf(payload, `${ACCEL_OPTION_PREFIX}line_degraded_rate`)
+  const global = optionValueOf(payload, `${ACCEL_OPTION_PREFIX}global_concurrency`)
   return {
     ingressHost: optionValueOf(payload, `${ACCEL_OPTION_PREFIX}ingress_host`),
     slotTTLSeconds: ttl || EMPTY_FORM.slotTTLSeconds,
     // 缺省视为开启：新增配置项在未保存过时不应把已有功能关掉
     lineDisplayEnabled: enabled === '' ? true : enabled === 'true',
     lineDegradedRate: rate || EMPTY_FORM.lineDegradedRate,
+    globalConcurrency: global || EMPTY_FORM.globalConcurrency,
   }
 }
 
@@ -110,6 +114,11 @@ export function AccelLineCard() {
       toast.error('异常线路阈值需在 1 到 100 之间')
       return
     }
+    const global = Number(form.globalConcurrency)
+    if (!Number.isFinite(global) || global < 0 || global > 100000) {
+      toast.error('全域并发上限需在 0 到 100000 之间（0 表示不限）')
+      return
+    }
     setSaving(true)
     try {
       const entries: Array<[string, string]> = [
@@ -117,6 +126,7 @@ export function AccelLineCard() {
         ['slot_ttl_seconds', String(Math.round(ttl))],
         ['line_display_enabled', form.lineDisplayEnabled ? 'true' : 'false'],
         ['line_degraded_rate', String(Math.round(rate))],
+        ['global_concurrency', String(Math.round(global))],
       ]
       // 一次 PUT 只能写一个键，顺序提交；任一失败即中断并提示，
       // 避免出现「域名写进去了但节奏参数没写」的半成品状态。
@@ -141,8 +151,9 @@ export function AccelLineCard() {
         <CardTitle className='flex items-center gap-2 text-base'>
           <Zap className='h-4 w-4' /> 加速专线
         </CardTitle>
-        <CardDescription>
-          入站加速域名与线路展示口径。出站专线本身在「渠道」里配代理，这里只管对外展示与并发计数。
+          <CardDescription>
+          加速链接是套了 CDN 的门牌：同一个站、同一套渠道、同一计费，只有入口域名不同。
+          这里配置加速域名与滥用兜底，调度和渠道完全不受影响。
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
@@ -158,7 +169,8 @@ export function AccelLineCard() {
                 onChange={(e) => patch({ ingressHost: e.target.value })}
               />
               <p className='text-muted-foreground text-xs'>
-                接好 DCDN 后填这里，加速页会向用户展示这个接入地址和示例。留空则不展示。
+                域名要能直达本站并保留 Host 头（CDN 回源请保持原始 Host）。填好后加速页会向
+                有订阅的用户下发带个人水印前缀的专属地址；留空则整块不展示。
               </p>
             </div>
 
@@ -204,6 +216,21 @@ export function AccelLineCard() {
                   REDIS_CONN_STRING 才会跨实例共享并发上限。
                 </p>
               </div>
+            </div>
+
+            <div className='space-y-1.5'>
+              <Label className='text-sm font-medium'>全域并发上限（0 = 不限）</Label>
+              <Input
+                type='number'
+                min={0}
+                max={100000}
+                value={form.globalConcurrency}
+                onChange={(e) => patch({ globalConcurrency: e.target.value })}
+              />
+              <p className='text-muted-foreground text-xs'>
+                所有加速用户共享的并发总量。域名一旦被传播出去，超出的请求会直接
+                429 而不是打满上游——相当于给泄露风险买了个止损。
+              </p>
             </div>
 
             <Button onClick={() => void save()} disabled={saving}>

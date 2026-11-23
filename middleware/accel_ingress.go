@@ -160,9 +160,11 @@ func AccelIngressGuard() gin.HandlerFunc {
 				c.ClientIP(), c.Request.UserAgent(), reason))
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": gin.H{
-					"message": "加速线路需要订阅加速套餐后使用 (ACCEL_SUBSCRIPTION_REQUIRED)",
+					"message": "加速线路需要订阅加速套餐后使用，订阅后到「加速」页复制专属接入地址 (ACCEL_SUBSCRIPTION_REQUIRED)",
 					"type":    "new_api_error",
 					"code":    "ACCEL_SUBSCRIPTION_REQUIRED",
+					// 自助引导（hc55）：客户端把这段原样展示出来时，用户能直接找到入口。
+					"upgrade_url": "/accel",
 				},
 			})
 			c.Abort()
@@ -215,6 +217,8 @@ func AccelIngressGuard() gin.HandlerFunc {
 						"message": "加速线路当前繁忙，请稍后重试 (ACCEL_LINE_BUSY)",
 						"type":    "new_api_error",
 						"code":    "ACCEL_LINE_BUSY",
+						// 429 不引导升级（用户已经付费），只提示稍后重试。
+						"retry_after_seconds": 3,
 					},
 				})
 				c.Abort()

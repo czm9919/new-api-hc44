@@ -30,6 +30,7 @@ For commercial licensing, please contact support@quantumnous.com
  * 额度字段只用于内部计费，前端不再自己换算。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   AlertTriangle,
   Check,
@@ -574,6 +575,36 @@ function PlanFormDialog({
   )
 }
 
+// 管理端待办提示（hc55）：域名没配时，用户侧整块不渲染，管理员容易以为
+// 「功能坏了」。这里直接把缺的那一步和跳转摆出来。
+function AdminIngressHint() {
+  const { t } = useTranslation()
+  return (
+    <Card className='border-dashed'>
+      <CardHeader className='gap-1'>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <AlertTriangle className='size-4' />
+          {t('Accelerated entry point is not configured yet')}
+        </CardTitle>
+        <CardDescription>
+          {t(
+            'Fill in the acceleration domain in settings to hand out personal links to subscribers. Everything else (plans, subscriptions, watermark prefixes) is ready.'
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button
+          size='sm'
+          variant='outline'
+          render={<Link to='/enhanced-settings' />}
+        >
+          {t('Go to settings')}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
 function AdminPlansSection({ limits }: { limits: AccelLimits }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -951,12 +982,19 @@ function AdminSubsSection() {
   )
 }
 
-function UsageGuide({ group }: { group: string }) {
+// 使用指引（hc55 修正）：加速链接是门牌，不是分组。
+// 旧版本这里教用户「把令牌分组改成加速分组」，与现在的模型完全相反，
+// 会把人带偏，所以整块重写成「换 base_url」。
+function UsageGuide() {
   const { t } = useTranslation()
   const steps = [
-    t('Create a dedicated token and set its group to the plan group'),
-    t('Or pass the group in the request body when calling the API'),
-    t('Keep the token on the acceleration group, other tokens stay on the normal line'),
+    t('Copy your personal accelerated address shown above (it carries your own prefix)'),
+    t(
+      'Replace the base_url in your client with it — keep the same token, models and billing'
+    ),
+    t(
+      'The prefix inside the address is your watermark. Do not share it publicly; it expires with your subscription'
+    ),
   ]
   return (
     <Card>
@@ -966,18 +1004,17 @@ function UsageGuide({ group }: { group: string }) {
           {t('How to use')}
         </CardTitle>
         <CardDescription>
-          {t('The plan unlocks a group; you still choose it per token.')}
+          {t(
+            'Acceleration is just a different entry domain. Dispatching, channels and billing stay exactly the same as the main site.'
+          )}
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-2'>
+      <CardContent>
         <ol className='text-muted-foreground list-decimal space-y-1 pl-5 text-sm'>
           {steps.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
-        <div className='flex items-center gap-2 text-sm'>
-          {t('Group')}: <GroupChip group={group} />
-        </div>
       </CardContent>
     </Card>
   )
@@ -1217,7 +1254,6 @@ export function AccelPage() {
   const plans = data?.plans ?? []
   const limits = data?.limits ?? DEFAULT_LIMITS
   const isActive = subscription?.active === true
-  const lockedGroup = subscription ? subscription.group_name : plans[0]?.group_name
 
   const handleSubscribe = (plan: AccelPlan) => {
     if (isActive && subscription && subscription.plan_id !== plan.id) {
@@ -1264,9 +1300,12 @@ export function AccelPage() {
             </div>
           ) : null}
 
-          {lockedGroup ? <UsageGuide group={lockedGroup} /> : null}
-          {subscription ? <LinesSection group={subscription.group_name} /> : null}
+          {subscription ? <UsageGuide /> : null}
+          {subscription?.group_name ? (
+            <LinesSection group={subscription.group_name} />
+          ) : null}
           {data?.ingress ? <IngressCard ingress={data.ingress} /> : null}
+          {isAdmin && !data?.ingress?.host ? <AdminIngressHint /> : null}
           {isAdmin ? <AdminPlansSection limits={limits} /> : null}
           {isAdmin ? <AdminSubsSection /> : null}
         </div>

@@ -8257,6 +8257,15 @@
     "Subscribe to an acceleration plan to unlock the accelerated entry point.": "订阅加速套餐后即可解锁加速接入地址。",
     "Guard: {{allowed}} allowed / {{denied}} denied": "守卫：放行 {{allowed}} / 拦截 {{denied}}",
     "Leave empty = same as the main site": "留空 = 与主站一致",
-    "Optional. Leave empty and the accelerated link dispatches exactly like the main site.": "可选。留空时加速链接的调度与主站完全一致。"
+    "Optional. Leave empty and the accelerated link dispatches exactly like the main site.": "可选。留空时加速链接的调度与主站完全一致。",
+    "OpenAI-compatible Base URL (recommended)": "OpenAI 兼容 Base URL（推荐）",
+    "Site root (for clients that append /v1 themselves)": "站点根地址（给自己拼 /v1 的客户端）",
+    "The masked part is your personal access prefix — click Copy to get the full address.": "被打码的部分是你的个人接入前缀，点击复制可获得完整地址。",
+    "Accelerated entry point is not configured yet": "加速入口域名还没配置",
+    "Fill in the acceleration domain in settings to hand out personal links to subscribers. Everything else (plans, subscriptions, watermark prefixes) is ready.": "到设置里填好加速域名，就能给订阅用户下发专属链接。套餐、订阅、水印前缀都已经就绪。",
+    "Copy your personal accelerated address shown above (it carries your own prefix)": "复制上方显示的专属加速地址（里面带你的个人前缀）",
+    "Replace the base_url in your client with it — keep the same token, models and billing": "把客户端里的 base_url 换成它即可，令牌、模型、计费都不用动",
+    "The prefix inside the address is your watermark. Do not share it publicly; it expires with your subscription": "地址里的前缀是你的专属水印，不要公开分享；订阅到期后自动失效",
+    "Acceleration is just a different entry domain. Dispatching, channels and billing stay exactly the same as the main site.": "加速只是换了一个入口域名，调度、渠道、计费与主站完全一致。"
   }
 }
