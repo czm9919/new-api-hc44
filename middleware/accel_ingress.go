@@ -51,6 +51,10 @@ func accelPrefixOf(c *gin.Context) string {
 	return v
 }
 
+// AccelIngressPrefix 返回本次请求从加速链接带来的水印前缀，主站请求为空。
+// 供前端兜底路由判断「未匹配的 API 路径要不要回 JSON 而不是 index.html」。
+func AccelIngressPrefix(c *gin.Context) string { return accelPrefixOf(c) }
+
 func withAccelIngressCtx(c *gin.Context, prefix string) {
 	ctx := c.Request.Context()
 	ctx = context.WithValue(ctx, accelReroutedCtxKey, true)
@@ -82,6 +86,62 @@ func normalizeIngressHost(raw string) string {
 		host = host[:i]
 	}
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+}
+
+// isAccelIngressRequest 判断本次请求是不是从加速域名进来的（hc56）。
+//
+// 只认 c.Request.Host 在 CDN 后面必然失效：CDN 回源时 Host 常被改写成
+// 源站 IP 或源站域名，真实域名留在 X-Forwarded-Host（Cloudflare / 腾讯云 /
+// 阿里云都支持），部分 CDN 用 X-Original-Host。Host 一旦对不上，整个加速
+// 机制就静默降级——前缀不被剥离，路径原样落到前端兜底，客户端拿到的是
+// 一坨 HTML，表现就是「链接打不开 / 都是 404」。
+//
+// 安全性：多带这两个头只会让请求进入更严格的加速分支（要求有效水印前缀 +
+// 本人令牌 + 生效订阅），伪造它们只会把自己挡在门外，不存在越权。
+func isAccelIngressRequest(c *gin.Context, ingress string) bool {
+	if ingress == "" {
+		return false
+	}
+	if normalizeIngressHost(c.Request.Host) == ingress {
+		return true
+	}
+	for _, header := range []string{"X-Forwarded-Host", "X-Original-Host"} {
+		raw := c.GetHeader(header)
+		if raw == "" {
+			continue
+		}
+		// 多级代理会给出逗号分隔的链，最左侧是客户端视角的原始 Host。
+		if i := strings.IndexByte(raw, ','); i >= 0 {
+			raw = raw[:i]
+		}
+		if normalizeIngressHost(raw) == ingress {
+			return true
+		}
+	}
+	return false
+}
+
+// collapseSlashes 合并连续斜杠。
+// 很多 SDK 在拼接 base_url 时会多出「/<prefix>//v1/...」这种双斜杠，
+// 路由表里没有对应条目，会一路掉到前端兜底返回 HTML。
+func collapseSlashes(path string) string {
+	if !strings.Contains(path, "//") {
+		return path
+	}
+	out := make([]byte, 0, len(path))
+	prevSlash := false
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			if prevSlash {
+				continue
+			}
+			prevSlash = true
+		} else {
+			prevSlash = false
+		}
+		out = append(out, path[i])
+	}
+	return string(out)
 }
 
 // splitAccelPrefix 判断路径是否以 /<8位hex前缀>/ 开头。
@@ -119,19 +179,29 @@ func AccelIngressRewrite(engine *gin.Engine) gin.HandlerFunc {
 			return
 		}
 		ingress := normalizeIngressHost(operation_setting.GetAccelSetting().IngressHost)
-		if ingress == "" || normalizeIngressHost(c.Request.Host) != ingress {
+		if !isAccelIngressRequest(c, ingress) {
 			c.Next()
 			return
 		}
 		prefix, rest, ok := splitAccelPrefix(c.Request.URL.Path)
 		if !ok {
 			// 加速域名下不带前缀的路径：如果恰好命中 /v1 等注册路由，
-			// 会由 relay 组内的 AccelIngressGuard 拦截；其余交给 404。
+			// 会由 relay 组内的 AccelIngressGuard 拦截；其余交给前端兜底。
 			c.Next()
 			return
 		}
+		rest = collapseSlashes(rest)
 		withAccelIngressCtx(c, prefix)
 		c.Request.URL.Path = rest
+		c.Request.URL.RawPath = ""
+		// RequestURI 必须同步重写（hc56）：NoRoute 兜底里用 RequestURI 前缀
+		// 判断「是不是 API 路径」，重路由后它仍是 /<prefix>/v1/...，
+		// 判断失配就会把 JSON 404 变成一坨 index.html。
+		if c.Request.URL.RawQuery != "" {
+			c.Request.RequestURI = rest + "?" + c.Request.URL.RawQuery
+		} else {
+			c.Request.RequestURI = rest
+		}
 		c.Abort()
 		engine.HandleContext(c)
 	}
@@ -146,7 +216,7 @@ func AccelIngressGuard() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if normalizeIngressHost(c.Request.Host) != ingress {
+		if !isAccelIngressRequest(c, ingress) {
 			c.Next()
 			return
 		}

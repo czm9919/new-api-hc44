@@ -145,3 +145,104 @@ func TestAccelIngressRewrite(t *testing.T) {
 		t.Fatalf("unexpected rewritten request: %s", w.Body.String())
 	}
 }
+
+// hc56：CDN 回源改写 Host 后的域名识别。
+// 生产上 CDN 常把 Host 改成源站 IP/源站域名，真实域名只在 X-Forwarded-Host
+// （或 X-Original-Host）里。只认 Host 会让加速机制静默失效，用户看到的是
+// 「链接打不开 / 都是 404」。这里锁住三种来源的识别，以及主站不被误伤。
+func TestIsAccelIngressRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name    string
+		host    string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "host 直接命中", host: "accel.example.com", want: true},
+		{name: "host 带端口", host: "accel.example.com:8443", want: true},
+		{name: "host 大小写", host: "ACCEL.Example.com", want: true},
+		{name: "CDN 回源 IP + XFH", host: "203.0.113.9:3000",
+			headers: map[string]string{"X-Forwarded-Host": "accel.example.com"}, want: true},
+		{name: "XFH 多级链取第一个", host: "203.0.113.9",
+			headers: map[string]string{"X-Forwarded-Host": "accel.example.com, edge.internal"}, want: true},
+		{name: "X-Original-Host", host: "10.0.0.2",
+			headers: map[string]string{"X-Original-Host": "accel.example.com"}, want: true},
+		{name: "CDN 回源 IP 且无任何头", host: "203.0.113.9:3000", want: false},
+		{name: "主域名 + 无关 XFH", host: "api.example.com",
+			headers: map[string]string{"X-Forwarded-Host": "other.example.com"}, want: false},
+		{name: "相似域名不算命中", host: "accel.example.com.evil.io", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			c.Request.Host = tc.host
+			for k, v := range tc.headers {
+				c.Request.Header.Set(k, v)
+			}
+			if got := isAccelIngressRequest(c, "accel.example.com"); got != tc.want {
+				t.Fatalf("isAccelIngressRequest(host=%q, headers=%v) = %v, want %v",
+					tc.host, tc.headers, got, tc.want)
+			}
+		})
+	}
+}
+
+// hc56：SDK 拼 base_url 常见多出一个斜杠（/<prefix>//v1/...），
+// 不合并就会掉到前端兜底，客户端拿到 HTML 报解析失败。
+func TestCollapseSlashes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{in: "/v1/chat/completions", want: "/v1/chat/completions"},
+		{in: "//v1/chat/completions", want: "/v1/chat/completions"},
+		{in: "/v1//chat//completions", want: "/v1/chat/completions"},
+		{in: "/", want: "/"},
+		{in: "", want: ""},
+	}
+	for _, tc := range cases {
+		if got := collapseSlashes(tc.in); got != tc.want {
+			t.Fatalf("collapseSlashes(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// hc56：重路由后 RequestURI 必须跟着改。
+// 前端兜底用 RequestURI 的前缀判断「这是不是 API 路径」，不改就会把
+// JSON 404 变成 index.html（客户端只能看到「响应解析失败」）。
+func TestAccelIngressRewriteUpdatesRequestURI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	operation_setting.GetAccelSetting().IngressHost = "accel.example.com"
+	defer func() { operation_setting.GetAccelSetting().IngressHost = "" }()
+
+	r := gin.New()
+	r.Use(AccelIngressRewrite(r))
+	r.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.String(http.StatusOK, "uri=%s path=%s", c.Request.RequestURI, c.Request.URL.Path)
+	})
+
+	// 双斜杠 + query：剥前缀、合并斜杠、query 原样保留。
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/a3f2b91c//v1/chat/completions?stream=true", nil)
+	req.Host = "accel.example.com"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("double slash must be collapsed and rewritten, got status %d", w.Code)
+	}
+	if want := "uri=/v1/chat/completions?stream=true path=/v1/chat/completions"; w.Body.String() != want {
+		t.Fatalf("got %q, want %q", w.Body.String(), want)
+	}
+
+	// CDN 改写 Host：靠 X-Forwarded-Host 也能剥前缀。
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/a3f2b91c/v1/chat/completions", nil)
+	req.Host = "203.0.113.9:3000"
+	req.Header.Set("X-Forwarded-Host", "accel.example.com")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CDN rewritten host must still rewrite, got status %d", w.Code)
+	}
+	if want := "uri=/v1/chat/completions path=/v1/chat/completions"; w.Body.String() != want {
+		t.Fatalf("got %q, want %q", w.Body.String(), want)
+	}
+}

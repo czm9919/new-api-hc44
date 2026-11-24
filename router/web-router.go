@@ -48,7 +48,18 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 		},
 		middleware.ServeFrontendFiles(frontendFS),
 		func(c *gin.Context) {
-			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+			// 加速链接（hc56）：前缀已经剥离，但路由仍然没命中——最常见的原因是
+			// 用户把 base_url 填成了「根+前缀」少了 /v1。这里必须回 JSON 错误，
+			// 否则会掉进下面的 index.html 分支，客户端拿到 HTML 只会报「响应解析失败」，
+			// 根本看不出是地址填错了。
+			if middleware.AccelIngressPrefix(c) != "" {
+				controller.RelayNotFound(c)
+				return
+			}
+			// 用 URL.Path 而不是 RequestURI：重路由后 RequestURI 仍是原始串，
+			// 拿它做前缀判断会让 API 路径误判成前端路由（hc56 修复）。
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/assets") {
 				controller.RelayNotFound(c)
 				return
 			}
