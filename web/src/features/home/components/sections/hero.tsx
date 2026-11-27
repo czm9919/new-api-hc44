@@ -80,7 +80,7 @@ export function Hero(props: HeroProps) {
   }
 
   return (
-    <section className='relative z-10 overflow-hidden px-6 pt-24 pb-16 md:pt-32 md:pb-24 lg:pt-36 lg:pb-28'>
+    <section className='relative z-10 overflow-hidden px-4 pt-16 pb-12 sm:px-6 md:pt-32 md:pb-24 lg:pt-36 lg:pb-28'>
       {/* Flat canvas: a single hairline grid, no color blobs. */}
       <div
         aria-hidden
@@ -100,7 +100,7 @@ export function Hero(props: HeroProps) {
           </div>
 
           <h1
-            className='landing-animate-fade-up text-[clamp(2.25rem,4.5vw,3.25rem)] leading-[1.12] font-semibold tracking-[-0.02em]'
+            className='landing-animate-fade-up text-[clamp(1.75rem,6.8vw,3.25rem)] leading-[1.14] font-semibold tracking-[-0.02em] text-balance md:leading-[1.12]'
             style={{ animationDelay: '60ms' }}
           >
             {t('Unified API Gateway for')}
@@ -110,7 +110,7 @@ export function Hero(props: HeroProps) {
             </span>
           </h1>
           <p
-            className='landing-animate-fade-up text-muted-foreground/80 mt-5 max-w-xl text-base leading-relaxed opacity-0 md:text-[15px]'
+            className='landing-animate-fade-up text-muted-foreground/80 mt-5 max-w-xl text-base leading-relaxed text-pretty opacity-0 md:text-[15px]'
             style={{ animationDelay: '120ms' }}
           >
             {t(

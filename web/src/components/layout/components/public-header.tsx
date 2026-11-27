@@ -203,7 +203,11 @@ export function PublicHeader(props: PublicHeaderProps) {
         <div
           className={cn(
             'pointer-events-auto mx-auto transition-[max-width,padding] duration-300 ease-out',
-            scrolled ? 'max-w-[52rem] px-3 pt-3' : 'max-w-7xl px-4 pt-0 md:px-6'
+            // 悬浮顶栏是 fixed top-0，刘海屏下要自己让出状态栏高度，
+            // 否则滚动态的胶囊会被状态栏压住。
+            scrolled
+              ? 'max-w-[52rem] px-3 pt-[max(0.75rem,env(safe-area-inset-top,0px))]'
+              : 'max-w-7xl px-4 pt-[env(safe-area-inset-top,0px)] md:px-6'
           )}
         >
           <nav

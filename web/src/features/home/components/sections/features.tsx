@@ -250,7 +250,7 @@ export function Features(_props: FeaturesProps) {
                 {f.icon}
               </div>
               <h3 className='mb-1.5 text-sm font-semibold'>{f.title}</h3>
-              <p className='text-muted-foreground max-w-[200px] text-xs leading-relaxed'>
+              <p className='text-muted-foreground max-w-[200px] text-xs leading-relaxed text-pretty'>
                 {f.desc}
               </p>
             </AnimateInView>

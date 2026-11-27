@@ -98,7 +98,10 @@ For commercial licensing, please contact support@quantumnous.com
   /* Flat-minimal geometry: 8px base radius. Every `rounded-*` utility is a
    * multiple of this token, so one number tightens the whole app. */
   --radius: 0.5rem;
-  --app-header-height: 3rem;
+  /* 顶栏高度含 iOS 刘海安全区：viewport-fit=cover 之后，顶栏会延伸到
+   * 状态栏下方，不把安全区算进高度就会压住标题。env() 在非刘海设备上
+   * 解析为 0px，等价于原来的 3rem。 */
+  --app-header-height: calc(3rem + env(safe-area-inset-top, 0px));
   /* Static build-channel fallback consumed when JS hasn't booted yet. */
   --app-rev: '2k6e8r7p';
   /* Auto starts with the browser font, including before JS applies the

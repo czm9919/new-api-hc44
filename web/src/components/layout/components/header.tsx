@@ -25,7 +25,9 @@ export function Header({ className, children, ...props }: HeaderProps) {
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 h-[var(--app-header-height,3rem)] w-full shrink-0 bg-transparent',
+        // pt 留出状态栏高度：高度变量已把 safe-area 加进总高，
+        // 这里把内容压到安全区下方，刘海屏上标题才不会被状态栏盖住。
+        'sticky top-0 z-40 h-[var(--app-header-height,3rem)] w-full shrink-0 bg-transparent pt-[env(safe-area-inset-top,0px)]',
         className
       )}
       {...props}
