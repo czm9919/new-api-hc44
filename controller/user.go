@@ -82,11 +82,13 @@ func Login(c *gin.Context) {
 	// 不再进入密码校验，避免继续消耗 Argon2id 的算力。
 	if wait := service.LoginLockRemainingSeconds(username); wait > 0 {
 		c.Header("Retry-After", strconv.Itoa(wait))
-		c.JSON(http.StatusTooManyRequests, gin.H{
-			"success": false,
-			"code":    "LOGIN_LOCKED",
-			"message": fmt.Sprintf("Too many failed sign-in attempts. Try again in %d seconds.", wait),
-			"data":    gin.H{"retry_after": wait},
+		// 英文原文做 message_key，message 由 localizeMessage 按读者语言渲染，
+		// 控制台和脚本拿到的都是中文，不再出现英文倒计时提示。
+		const lockKey = "Too many failed sign-in attempts. Try again in {{seconds}} seconds."
+		message := common.NewMessage(lockKey, map[string]any{"seconds": wait})
+		common.ApiErrorStatus(c, http.StatusTooManyRequests, message, gin.H{
+			"code": "LOGIN_LOCKED",
+			"data": gin.H{"retry_after": wait},
 		})
 		return
 	}
@@ -111,6 +113,22 @@ func Login(c *gin.Context) {
 	service.ResetLoginFailures(username)
 
 	setupLogin(&user, nil, c)
+}
+
+// AdminUnlockLogin 解除某个用户名的登录失败锁定。锁定状态只存在内存里，
+// 重启服务同样会清空；这个接口让管理员不必重启就能放行被误锁的账号
+// （连续试错密码把自己锁住是最常见的场景）。仅管理员可调用。
+func AdminUnlockLogin(c *gin.Context) {
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil || strings.TrimSpace(req.Username) == "" {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	service.ResetLoginFailures(req.Username)
+	common.SysLog(common.LogText("admin %d cleared the login lock for %s", c.GetInt("id"), req.Username))
+	common.ApiSuccess(c, gin.H{"username": req.Username})
 }
 
 // loginMethodFromContext 根据请求路径推导登录方式，用于登录审计日志。

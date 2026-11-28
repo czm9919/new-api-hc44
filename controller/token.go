@@ -231,19 +231,13 @@ func GetTokenStatus(c *gin.Context) {
 func GetTokenUsage(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "No Authorization header",
-		})
+		common.ApiErrorStatus(c, http.StatusUnauthorized, common.NewMessage("No Authorization header"))
 		return
 	}
 
 	parts := strings.Split(authHeader, " ")
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "Invalid Bearer token",
-		})
+		common.ApiErrorStatus(c, http.StatusUnauthorized, common.NewMessage("Invalid Bearer token"))
 		return
 	}
 	tokenKey := parts[1]

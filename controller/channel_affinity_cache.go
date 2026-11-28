@@ -60,17 +60,11 @@ func GetChannelAffinityUsageCacheStats(c *gin.Context) {
 	keyFp := strings.TrimSpace(c.Query("key_fp"))
 
 	if ruleName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "missing param: rule_name",
-		})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("missing param: rule_name"))
 		return
 	}
 	if keyFp == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "missing param: key_fp",
-		})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("missing param: key_fp"))
 		return
 	}
 

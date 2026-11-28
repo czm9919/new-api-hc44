@@ -179,20 +179,20 @@ func generateEmailBindingCodes(requireOld bool) (emailBindingCodes, error) {
 }
 
 func sendEmailBindingCodes(lang string, state model.EmailBindingState, codes emailBindingCodes) error {
-	subject := i18n.Translate(lang, i18n.MsgEmailBindingSubject, map[string]any{"SystemName": common.SystemName})
+	subject := i18n.TranslateCN(lang, i18n.MsgEmailBindingSubject, map[string]any{"SystemName": common.SystemName})
 	minutes := map[string]any{"Minutes": int(model.EmailBindingTTL / time.Minute)}
 	content := fmt.Sprintf("<p>%s</p><p>%s</p><p>%s</p>",
-		i18n.Translate(lang, i18n.MsgEmailBindingNewIntro),
-		i18n.Translate(lang, i18n.MsgEmailBindingCode, map[string]any{"Code": html.EscapeString(codes.New)}),
-		i18n.Translate(lang, i18n.MsgEmailBindingNewValidity, minutes))
+		i18n.TranslateCN(lang, i18n.MsgEmailBindingNewIntro),
+		i18n.TranslateCN(lang, i18n.MsgEmailBindingCode, map[string]any{"Code": html.EscapeString(codes.New)}),
+		i18n.TranslateCN(lang, i18n.MsgEmailBindingNewValidity, minutes))
 	if err := common.SendEmail(subject, state.Email, content); err != nil {
 		return err
 	}
 	if codes.Old != "" {
 		content = fmt.Sprintf("<p>%s</p><p>%s</p><p>%s</p>",
-			i18n.Translate(lang, i18n.MsgEmailBindingOldIntro),
-			i18n.Translate(lang, i18n.MsgEmailBindingCode, map[string]any{"Code": html.EscapeString(codes.Old)}),
-			i18n.Translate(lang, i18n.MsgEmailBindingOldValidity, minutes))
+			i18n.TranslateCN(lang, i18n.MsgEmailBindingOldIntro),
+			i18n.TranslateCN(lang, i18n.MsgEmailBindingCode, map[string]any{"Code": html.EscapeString(codes.Old)}),
+			i18n.TranslateCN(lang, i18n.MsgEmailBindingOldValidity, minutes))
 		return common.SendEmail(subject, state.CurrentEmail, content)
 	}
 	return nil

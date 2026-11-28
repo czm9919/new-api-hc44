@@ -988,7 +988,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		if milliseconds > disableThreshold {
 			// The reason is stored with the channel and sent in the disable
 			// notice; no request states a language here.
-			err := errors.New(i18n.Translate("", i18n.MsgChannelResponseTimeExceeded, map[string]any{
+			err := errors.New(i18n.TranslateCN("", i18n.MsgChannelResponseTimeExceeded, map[string]any{
 				"Seconds":   fmt.Sprintf("%.2f", float64(milliseconds)/1000.0),
 				"Threshold": fmt.Sprintf("%.2f", float64(disableThreshold)/1000.0),
 			}))
@@ -1241,7 +1241,7 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 	}
 	if notify && (ctx == nil || ctx.Err() == nil) {
 		service.NotifyChannelWatchers(dto.NotifyTypeChannelTest, func(lang string) (string, string) {
-			return i18n.Translate(lang, i18n.MsgChannelTestCompletedSubject), i18n.Translate(lang, i18n.MsgChannelTestCompletedContent)
+			return i18n.TranslateCN(lang, i18n.MsgChannelTestCompletedSubject), i18n.TranslateCN(lang, i18n.MsgChannelTestCompletedContent)
 		})
 	}
 	return summary, nil

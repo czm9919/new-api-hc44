@@ -60,8 +60,8 @@ func sendUnrecognizedLoginEmail(userId int, method, ip string) {
 		"IP":         ip,
 		"Method":     method,
 	}
-	subject := i18n.Translate(lang, i18n.MsgEmailLoginAlertSubject, args)
-	content := fmt.Sprintf("<p>%s</p>", i18n.Translate(lang, i18n.MsgEmailLoginAlertBody, args))
+	subject := i18n.TranslateCN(lang, i18n.MsgEmailLoginAlertSubject, args)
+	content := fmt.Sprintf("<p>%s</p>", i18n.TranslateCN(lang, i18n.MsgEmailLoginAlertBody, args))
 	if err := common.SendEmail(subject, user.Email, content); err != nil {
 		common.SysLog(common.LogText("login alert email to user %d (%s) failed: %v", userId, ip, err))
 	} else {

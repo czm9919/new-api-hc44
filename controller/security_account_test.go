@@ -721,7 +721,8 @@ func TestSecurityAccountMailsFollowTheOwnersLanguage(t *testing.T) {
 	}{
 		{"request language when none is saved", "", "zh-TW", "tw@example.com", "您的帳戶安全設定有變動：已綁定登入帳號 &lt;b&gt;Corp&lt;/b&gt;。"},
 		{"saved language over the request", "en", "zh-CN", "en@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
-		{"default language when neither states one", "", "", "default@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
+		// 站点默认中文：用户没选语言、请求也没声明语言时，通知用简体中文
+		{"site default when neither states one", "", "", "default@example.com", "您的账户安全设置有变动：已绑定登录账号 &lt;b&gt;Corp&lt;/b&gt;。"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saveLanguage(tc.saved)

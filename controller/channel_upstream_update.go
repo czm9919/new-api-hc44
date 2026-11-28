@@ -690,7 +690,7 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 ) string {
 	var builder strings.Builder
 	failedChannels := len(failedChannelIDs)
-	builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateSummary, map[string]any{
+	builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateSummary, map[string]any{
 		"Checked":   checkedChannels,
 		"Changed":   changedChannels,
 		"Added":     detectedAddModels,
@@ -702,7 +702,7 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 	if len(channelSummaries) > 0 {
 		displayCount := min(len(channelSummaries), channelUpstreamModelUpdateNotifyMaxChannelDetails)
 		builder.WriteString("\n\n")
-		builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateChangedChannels, map[string]any{
+		builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateChangedChannels, map[string]any{
 			"Shown": displayCount,
 			"Total": len(channelSummaries),
 		}))
@@ -711,7 +711,7 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 		}
 		if len(channelSummaries) > displayCount {
 			builder.WriteString("\n- ")
-			builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateMoreChannels, map[string]any{
+			builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateMoreChannels, map[string]any{
 				"Count": len(channelSummaries) - displayCount,
 			}))
 		}
@@ -721,13 +721,13 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 	if len(normalizedAddModelSamples) > 0 {
 		displayCount := min(len(normalizedAddModelSamples), channelUpstreamModelUpdateNotifyMaxModelDetails)
 		builder.WriteString("\n\n")
-		builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateAddedModels, map[string]any{
+		builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateAddedModels, map[string]any{
 			"Shown":  displayCount,
 			"Total":  len(normalizedAddModelSamples),
 			"Models": strings.Join(normalizedAddModelSamples[:displayCount], ", "),
 		}))
 		if len(normalizedAddModelSamples) > displayCount {
-			builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
+			builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
 				"Count": len(normalizedAddModelSamples) - displayCount,
 			}))
 		}
@@ -737,13 +737,13 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 	if len(normalizedRemoveModelSamples) > 0 {
 		displayCount := min(len(normalizedRemoveModelSamples), channelUpstreamModelUpdateNotifyMaxModelDetails)
 		builder.WriteString("\n\n")
-		builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateRemovedModels, map[string]any{
+		builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateRemovedModels, map[string]any{
 			"Shown":  displayCount,
 			"Total":  len(normalizedRemoveModelSamples),
 			"Models": strings.Join(normalizedRemoveModelSamples[:displayCount], ", "),
 		}))
 		if len(normalizedRemoveModelSamples) > displayCount {
-			builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
+			builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
 				"Count": len(normalizedRemoveModelSamples) - displayCount,
 			}))
 		}
@@ -755,13 +755,13 @@ func buildUpstreamModelUpdateTaskNotificationContent(
 			return fmt.Sprintf("%d", channelID)
 		})
 		builder.WriteString("\n\n")
-		builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateFailedChannels, map[string]any{
+		builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateFailedChannels, map[string]any{
 			"Shown": displayCount,
 			"Total": failedChannels,
 			"Ids":   strings.Join(displayIDs, ", "),
 		}))
 		if failedChannels > displayCount {
-			builder.WriteString(i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
+			builder.WriteString(i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateMoreOmitted, map[string]any{
 				"Count": failedChannels - displayCount,
 			}))
 		}
@@ -936,7 +936,7 @@ scanLoop:
 			return summary
 		}
 		service.NotifyUpstreamModelUpdateWatchers(func(lang string) (string, string) {
-			return i18n.Translate(lang, i18n.MsgChannelUpstreamUpdateNotifySubject),
+			return i18n.TranslateCN(lang, i18n.MsgChannelUpstreamUpdateNotifySubject),
 				buildUpstreamModelUpdateTaskNotificationContent(
 					lang,
 					checkedChannels,
@@ -961,10 +961,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 	if req.ID <= 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "invalid channel id",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("invalid channel id"))
 		return
 	}
 
@@ -1017,10 +1014,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 	if req.ID <= 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "invalid channel id",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("invalid channel id"))
 		return
 	}
 

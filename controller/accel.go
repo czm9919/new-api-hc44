@@ -616,11 +616,11 @@ func parseAccelIdParam(c *gin.Context, name string) (int, error) {
 func GetAccelIngressStats(c *gin.Context) {
 	allowed, denied := middleware.AccelIngressStats()
 	common.ApiSuccess(c, gin.H{
-		"allowed":       allowed,
-		"denied":        denied,
-		"ingress_host":  operation_setting.GetAccelSetting().IngressHost,
-		"global_limit":  operation_setting.GetAccelSetting().GlobalConcurrency,
-		"slot_backend":  service.AccelSlotBackend(),
-		"server_time":   time.Now().Unix(),
+		"allowed":      allowed,
+		"denied":       denied,
+		"ingress_host": operation_setting.GetAccelSetting().IngressHost,
+		"global_limit": operation_setting.GetAccelSetting().GlobalConcurrency,
+		"slot_backend": service.AccelSlotBackend(),
+		"server_time":  time.Now().Unix(),
 	})
 }

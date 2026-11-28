@@ -27,13 +27,13 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	switch squareState {
 	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial:
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid model square state"})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid model square state"))
 		return
 	}
 
 	pageInfo := common.GetPageQuery(c)
 	if squareState != "" && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid pagination"))
 		return
 	}
 	offset, limit := pageInfo.GetStartIdx(), pageInfo.GetPageSize()
@@ -208,7 +208,7 @@ func DeleteModelMeta(c *gin.Context) {
 		return
 	}
 	if removePricing && c.GetInt("role") != common.RoleRootUser {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Model pricing is managed by a super administrator."))
 		return
 	}
 	result, err := model.DeleteModelMetadata([]int{id}, removeFromChannels, removePricing)
@@ -231,7 +231,7 @@ func BatchDeleteModelMeta(c *gin.Context) {
 		return
 	}
 	if request.RemovePricing && c.GetInt("role") != common.RoleRootUser {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Model pricing is managed by a super administrator."))
 		return
 	}
 	result, err := model.DeleteModelMetadata(request.ModelIDs, request.RemoveFromChannels, request.RemovePricing)

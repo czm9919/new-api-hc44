@@ -230,10 +230,7 @@ func ListModels(c *gin.Context, modelType int) {
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("get user group failed"))
 		return
 	}
 	ownerGroups := groups.ownerGroups

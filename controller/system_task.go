@@ -14,10 +14,7 @@ import (
 func CreateLogCleanupSystemTask(c *gin.Context) {
 	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
 	if targetTimestamp == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "target timestamp is required",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("target timestamp is required"))
 		return
 	}
 
@@ -37,10 +34,7 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 func GetCurrentSystemTask(c *gin.Context) {
 	taskType := c.Query("type")
 	if taskType == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "type is required",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("type is required"))
 		return
 	}
 
@@ -116,10 +110,7 @@ func DeleteSystemTaskHistory(c *gin.Context) {
 func GetSystemTask(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "task id is required",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("task id is required"))
 		return
 	}
 
@@ -129,10 +120,7 @@ func GetSystemTask(c *gin.Context) {
 		return
 	}
 	if task == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"success": false,
-			"message": "task not found",
-		})
+		common.ApiErrorStatus(c, http.StatusNotFound, common.NewMessage("task not found"))
 		return
 	}
 

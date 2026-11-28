@@ -58,12 +58,12 @@ func getInferenceChannelStatus(c *gin.Context, channelType int) {
 	c.Header("Cache-Control", "no-store")
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid channel id"})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid channel id"))
 		return
 	}
 	channel, err := model.GetChannelById(id, true)
 	if err != nil || channel == nil {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Channel not found"})
+		common.ApiErrorStatus(c, http.StatusNotFound, common.NewMessage("Channel not found"))
 		return
 	}
 	if channel.Type != channelType {

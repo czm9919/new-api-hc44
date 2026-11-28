@@ -29,26 +29,17 @@ func ExportDatabaseBackup(c *gin.Context) {
 	dbLabel := "main"
 	if scope == "log" {
 		if !common.UsingLogDatabase(common.DatabaseTypeSQLite) {
-			c.JSON(http.StatusNotImplemented, gin.H{
-				"success": false,
-				"message": "log database backup is only available for SQLite",
-			})
+			common.ApiErrorStatus(c, http.StatusNotImplemented, common.NewMessage("log database backup is only available for SQLite"))
 			return
 		}
 		db = model.LOG_DB
 		dbLabel = "log"
 	} else if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		c.JSON(http.StatusNotImplemented, gin.H{
-			"success": false,
-			"message": "database backup is only available for SQLite; use mysqldump / pg_dump for server databases",
-		})
+		common.ApiErrorStatus(c, http.StatusNotImplemented, common.NewMessage("database backup is only available for SQLite; use mysqldump / pg_dump for server databases"))
 		return
 	}
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"success": false,
-			"message": "database is not initialized",
-		})
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("database is not initialized"))
 		return
 	}
 

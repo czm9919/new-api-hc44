@@ -140,19 +140,19 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// 加速专线（hc48~hc52）：订阅/套餐/线路归属钱包域；线路状态只读；
 	// 管理端套餐 CRUD 与订阅管理按 option/user 权限归口。
 	// GET /api/rankings/users 消费排行榜是公开只读数据，走 any。
-	"GET /api/user/accel":                          accessTokenScopeRule("wallet:read"),
-	"POST /api/user/accel/subscribe":               accessTokenScopeRule("wallet:write"),
-	"POST /api/user/accel/auto_renew":              accessTokenScopeRule("wallet:write"),
-	"GET /api/user/accel/lines":                    accessTokenAnyRule,
-	"GET /api/user/accel/plans":                    accessTokenAnyRule,
-	"POST /api/user/accel/plans":                   accessTokenScopeRule("option:write"),
-	"PUT /api/user/accel/plans/:id":                accessTokenScopeRule("option:write"),
-	"DELETE /api/user/accel/plans/:id":             accessTokenScopeRule("option:write"),
-	"GET /api/user/accel/subscriptions":            accessTokenScopeRule("user:read"),
-	"POST /api/user/accel/subscriptions/extend":    accessTokenScopeRule("user:write"),
-	"POST /api/user/accel/subscriptions/revoke":    accessTokenScopeRule("user:write"),
-	"GET /api/user/accel/ingress/stats":            accessTokenScopeRule("option:read"),
-	"GET /api/rankings/users":                      accessTokenAnyRule,
+	"GET /api/user/accel":                       accessTokenScopeRule("wallet:read"),
+	"POST /api/user/accel/subscribe":            accessTokenScopeRule("wallet:write"),
+	"POST /api/user/accel/auto_renew":           accessTokenScopeRule("wallet:write"),
+	"GET /api/user/accel/lines":                 accessTokenAnyRule,
+	"GET /api/user/accel/plans":                 accessTokenAnyRule,
+	"POST /api/user/accel/plans":                accessTokenScopeRule("option:write"),
+	"PUT /api/user/accel/plans/:id":             accessTokenScopeRule("option:write"),
+	"DELETE /api/user/accel/plans/:id":          accessTokenScopeRule("option:write"),
+	"GET /api/user/accel/subscriptions":         accessTokenScopeRule("user:read"),
+	"POST /api/user/accel/subscriptions/extend": accessTokenScopeRule("user:write"),
+	"POST /api/user/accel/subscriptions/revoke": accessTokenScopeRule("user:write"),
+	"GET /api/user/accel/ingress/stats":         accessTokenScopeRule("option:read"),
+	"GET /api/rankings/users":                   accessTokenAnyRule,
 
 	// router/api-router.go: /api/user (admin)
 	"GET /api/user/":                   accessTokenScopeRule("user:read"),
@@ -169,12 +169,14 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/user/:id/bindings/:binding_type":      accessTokenScopeRule("user:write"),
 	"GET /api/user/:id":                                accessTokenScopeRule("user:read"),
 	"POST /api/user/":                                  accessTokenScopeRule("user:write"),
-	"POST /api/user/manage":                            accessTokenScopeRule("user:write"),
-	"PUT /api/user/":                                   accessTokenScopeRule("user:write"),
-	"DELETE /api/user/:id":                             accessTokenScopeRule("user:write"),
-	"DELETE /api/user/:id/reset_passkey":               accessTokenScopeRule("user:write"),
-	"GET /api/user/2fa/stats":                          accessTokenScopeRule("user:read"),
-	"DELETE /api/user/:id/2fa":                         accessTokenScopeRule("user:write"),
+	// 解除登录失败锁定（管理员在用户被误锁时放行）
+	"POST /api/user/login/unlock":        accessTokenScopeRule("user:write"),
+	"POST /api/user/manage":              accessTokenScopeRule("user:write"),
+	"PUT /api/user/":                     accessTokenScopeRule("user:write"),
+	"DELETE /api/user/:id":               accessTokenScopeRule("user:write"),
+	"DELETE /api/user/:id/reset_passkey": accessTokenScopeRule("user:write"),
+	"GET /api/user/2fa/stats":            accessTokenScopeRule("user:read"),
+	"DELETE /api/user/:id/2fa":           accessTokenScopeRule("user:write"),
 
 	// router/api-router.go: /api/subscription
 	"GET /api/subscription/plans":                                    accessTokenScopeRule("wallet:read"),

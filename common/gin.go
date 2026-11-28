@@ -290,11 +290,41 @@ func ApiErrorStatus(c *gin.Context, status int, err error, fields ...gin.H) {
 	var message *Message
 	if errors.As(err, &message) {
 		maps.Copy(body, message.Fields())
+		// 英文原文既做键也做兜底文本。站点词典里有译文时，message 直接用读者
+		// 的语言——控制台、QQ 插件、脚本调用都能拿到同一条中文提示；没有译文
+		// 的键（上游透传的错误等）保持原文，不猜也不吞。
+		body["message"] = localizeMessage(c, message)
 	}
 	for _, extra := range fields {
 		maps.Copy(body, extra)
 	}
 	c.JSON(status, body)
+}
+
+// localizeMessage renders a console message in the language the reader stated.
+// The key doubles as the English source text, so an untranslated key falls back
+// to the original wording instead of showing a raw identifier.
+func localizeMessage(c *gin.Context, message *Message) string {
+	if message == nil {
+		return ""
+	}
+	// 只本地化控制台接口（/api/...）。/v1、/mj 等是 OpenAI 兼容协议，错误
+	// 文本按上游惯例保持英文，客户端解析和日志检索都不受读者语言影响。
+	if c == nil || c.Request == nil || c.Request.URL == nil ||
+		!strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		return message.Error()
+	}
+	if TranslateMessage == nil {
+		return message.Error()
+	}
+	var args []map[string]any
+	if message.Params != nil {
+		args = append(args, message.Params)
+	}
+	if text := TranslateMessage(c, message.Key, args...); text != "" && text != message.Key {
+		return text
+	}
+	return message.Error()
 }
 
 // ApiErrorT responds with a web console message; key is the English source
@@ -308,7 +338,7 @@ func ApiSuccessT(c *gin.Context, key string, data any, params ...map[string]any)
 	message := NewMessage(key, params...)
 	body := gin.H{
 		"success": true,
-		"message": message.Error(),
+		"message": localizeMessage(c, message),
 		"data":    data,
 	}
 	maps.Copy(body, message.Fields())

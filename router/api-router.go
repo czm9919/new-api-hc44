@@ -229,6 +229,8 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute.Use(middleware.AdminAuth())
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
+				// 解除某用户名的登录失败锁定（连续试错密码被锁时管理员放行）
+				adminRoute.POST("/login/unlock", controller.AdminUnlockLogin)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				// v1.1.0 M2 · B59 订单备注：给一笔充值单写运营备注（最长 255 字）

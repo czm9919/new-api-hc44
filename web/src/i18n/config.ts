@@ -94,10 +94,10 @@ i18n.use(initReactI18next)
 i18n.use(lazyLocaleBackend)
 
 const initPromise = i18n.init({
-  // Missing keys previously fell back to Simplified Chinese for every
-  // non-Chinese locale; English is the canonical full-key locale, and
-  // Traditional Chinese goes through Simplified Chinese first.
-  fallbackLng: (code: string) => (code === 'zhTW' ? ['zhCN', 'en'] : ['en']),
+  // 站点面向中文用户：读者主动选了英文时整站英文，其余情况一律简体中文。
+  // 缺键回退也落在中文上，避免「界面中文、提示英文」。繁体先落简体再落英文。
+  fallbackLng: (code: string) =>
+    code === 'en' ? ['en'] : ['zhCN', 'en'],
   supportedLngs: ['en', 'zhCN', 'fr', 'ru', 'ja', 'vi', 'zhTW'],
   load: 'currentOnly',
   partialBundledLanguages: true,
@@ -107,7 +107,9 @@ const initPromise = i18n.init({
     escapeValue: false, // not needed for react as it escapes by default
   },
   detection: {
-    order: ['localStorage', 'navigator'],
+    // 只读用户主动保存的选择，不跟随浏览器语言——英文系统首次访问同样是
+    // 中文界面，用户仍可在设置里切到 English 并记住。
+    order: ['localStorage'],
     caches: ['localStorage'],
     // Browsers report `zh-CN`/`zh-TW`/`zh`; map them onto our `zhCN`/`zhTW`
     // codes (non-Chinese codes pass through for normal supportedLngs matching).

@@ -417,7 +417,7 @@ func SyncUpstreamModels(c *gin.Context) {
 		Selections    []model.MetadataSyncSelection `json:"selections"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Selections) == 0 || request.SourceVersion == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Preview and select metadata changes before applying"})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Preview and select metadata changes before applying"))
 		return
 	}
 	source, upstream, vendors, err := fetchMetadataCatalog(c, request.Locale)
@@ -426,14 +426,14 @@ func SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 	if source.Version != request.SourceVersion {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "Upstream metadata changed; preview again"})
+		common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("Upstream metadata changed; preview again"))
 		return
 	}
 	updates := make([]model.MetadataSyncUpdate, 0, len(request.Selections))
 	for _, selection := range request.Selections {
 		values, exists := upstream[selection.ModelName]
 		if !exists {
-			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "Selected upstream model is no longer available"})
+			common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("Selected upstream model is no longer available"))
 			return
 		}
 		updates = append(updates, model.MetadataSyncUpdate{MetadataSyncSelection: selection, Values: values})

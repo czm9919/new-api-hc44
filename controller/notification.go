@@ -52,10 +52,7 @@ func MarkNotificationRead(c *gin.Context) {
 	userId := c.GetInt("id")
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "invalid notification id",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("invalid notification id"))
 		return
 	}
 	updated, err := service.MarkUserNotificationRead(userId, id)
@@ -64,10 +61,7 @@ func MarkNotificationRead(c *gin.Context) {
 		return
 	}
 	if !updated {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "notification not found or already read",
-		})
+		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("notification not found or already read"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

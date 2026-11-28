@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	LangZhCN    = "zh-CN"
-	LangZhTW    = "zh-TW"
-	LangEn      = "en"
-	DefaultLang = LangEn // Fallback to English if language not supported
+	LangZhCN = "zh-CN"
+	LangZhTW = "zh-TW"
+	LangEn   = "en"
+	// DefaultLang 是协议错误的兜底语言（/v1 等 OpenAI 兼容接口）：读不到读者
+	// 语言时返回英文，客户端解析与日志检索不受影响。发给用户本人看的内容
+	// （邮件、站内通知）走 TranslateCN，兜底简体中文，见该函数说明。
+	DefaultLang = LangEn
 )
 
 //go:embed locales/*.yaml
@@ -114,6 +117,22 @@ func Translate(lang, key string, args ...map[string]any) string {
 		return key
 	}
 	return msg
+}
+
+// TranslateCN renders content meant for a person (email, in-site notice). The
+// site serves Chinese readers, so a reader who never picked a language gets
+// Simplified Chinese instead of the English protocol default; a reader who
+// explicitly chose English still gets English.
+func TranslateCN(lang, key string, args ...map[string]any) string {
+	if strings.TrimSpace(lang) == "" {
+		lang = LangZhCN
+	}
+	return Translate(lang, key, args...)
+}
+
+// TCN is TranslateCN for callers that already hold the request context.
+func TCN(c *gin.Context, key string, args ...map[string]any) string {
+	return TranslateCN(StatedLang(c), key, args...)
 }
 
 // userLangLoaderFunc is a function that loads user language from database/cache

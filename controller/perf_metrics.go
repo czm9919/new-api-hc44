@@ -44,10 +44,7 @@ func GetPerfMetricsSummary(c *gin.Context) {
 func GetPerfMetrics(c *gin.Context) {
 	modelName := c.Query("model")
 	if modelName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "model is required",
-		})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("model is required"))
 		return
 	}
 

@@ -75,7 +75,7 @@ func TestStatedLangLoadsTheUserOnlyWithoutLoadedSettings(t *testing.T) {
 
 // A saved language or an Accept-Language header selects the language of a
 // backend message. A reader who states neither gets DEFAULT_LANGUAGE, which is
-// English when unset.
+// English when unset — protocol errors stay in English for API clients.
 func TestBackendMessageLanguage(t *testing.T) {
 	require.NoError(t, Init())
 	t.Cleanup(func() { common.DefaultLanguage = "" })
@@ -115,6 +115,11 @@ func TestBackendMessageLanguage(t *testing.T) {
 
 // A key missing from a locale, or a template that does not parse, reaches
 // clients as the raw key.
+//
+// Locale files may hold keys that keys.go does not declare: the web console and
+// a large part of the API pass English source text as the key, and those keys
+// are translated in place, so the check is "every declared key exists in every
+// locale" rather than "the key sets are identical".
 func TestLocalesRenderEveryKey(t *testing.T) {
 	require.NoError(t, Init())
 	keysFile, err := parser.ParseFile(token.NewFileSet(), "keys.go", nil, parser.SkipObjectResolution)
@@ -146,18 +151,27 @@ func TestLocalesRenderEveryKey(t *testing.T) {
 		slices.Sort(keysByLang[lang])
 	}
 	for _, lang := range SupportedLanguages() {
-		assert.Equal(t, declared, keysByLang[lang], lang)
+		for _, key := range declared {
+			assert.Contains(t, keysByLang[lang], key, "%s is missing the declared key %s", lang, key)
+		}
 		for _, key := range keysByLang[lang] {
 			text := Translate(lang, key, map[string]any{})
-			assert.NotEqual(t, key, text, "%s %s", lang, key)
+			// English locales store the English source text as the key, so the
+			// rendered text legitimately equals the key there; Chinese locales
+			// must actually translate it.
+			if lang != LangEn {
+				assert.NotEqual(t, key, text, "%s %s", lang, key)
+			}
 			assert.False(t, strings.Contains(text, "{{"), "%s %s: %s", lang, key, text)
 		}
 	}
 }
 
 // Web console responses carry the English source text as message_key plus its
-// params, and the web console translates them. The backend sends the same body
-// whatever language the request asks for.
+// params, and the web console can translate them on its own. The message field
+// is already rendered in the language the request stated, so plain API callers
+// (scripts, chat bots) read the same wording the console shows; keys without a
+// translation keep their English source text.
 func TestWebConsoleMessageResponse(t *testing.T) {
 	require.NoError(t, Init())
 	for _, tc := range []struct {
@@ -173,7 +187,7 @@ func TestWebConsoleMessageResponse(t *testing.T) {
 		{
 			name: "no params",
 			err:  common.NewMessage("Invalid parameters"),
-			want: `{"success":false,"message":"Invalid parameters","message_key":"Invalid parameters"}`,
+			want: `{"success":false,"message":"无效的参数","message_key":"Invalid parameters"}`,
 		},
 		{
 			name: "plain error",
