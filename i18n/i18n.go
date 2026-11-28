@@ -24,6 +24,11 @@ const (
 	// 语言时返回英文，客户端解析与日志检索不受影响。发给用户本人看的内容
 	// （邮件、站内通知）走 TranslateCN，兜底简体中文，见该函数说明。
 	DefaultLang = LangEn
+
+	// ConsoleLanguageHeader 是控制台在每次请求上声明的界面语言。前端切语言
+	// 后立刻带上这个头，服务端渲染的 message 就跟着页面走，不再取决于浏览器
+	// 语言或账户里保存的偏好。仅对 /api/ console 接口生效。
+	ConsoleLanguageHeader = "X-UI-Language"
 )
 
 //go:embed locales/*.yaml
@@ -60,6 +65,7 @@ func Init() error {
 
 		// Set the TranslateMessage function in common package
 		common.TranslateMessage = T
+		common.HasMessageKey = HasMessage
 	})
 	return initErr
 }
@@ -88,6 +94,18 @@ func GetLocalizer(lang string) *i18n.Localizer {
 	loc = i18n.NewLocalizer(bundle, lang, DefaultLang)
 	localizers[lang] = loc
 	return loc
+}
+
+// HasMessage reports whether the dictionaries know key. Callers that hand the
+// server a plain sentence (ApiErrorMsg) use it to decide whether to attach
+// message_key: only a real entry can be re-rendered by the web console, and
+// attaching an unknown string would let its "{{...}}" be read as a template.
+func HasMessage(key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	_, err := GetLocalizer(LangZhCN).Localize(&i18n.LocalizeConfig{MessageID: key})
+	return err == nil
 }
 
 // T translates a message key in the language the reader of the request stated
@@ -130,9 +148,10 @@ func TranslateCN(lang, key string, args ...map[string]any) string {
 	return Translate(lang, key, args...)
 }
 
-// TCN is TranslateCN for callers that already hold the request context.
+// TCN is TranslateCN for callers that already hold the request context. It
+// follows the account preference, not the console's current interface language.
 func TCN(c *gin.Context, key string, args ...map[string]any) string {
-	return TranslateCN(StatedLang(c), key, args...)
+	return TranslateCN(StatedPreferenceLang(c), key, args...)
 }
 
 // userLangLoaderFunc is a function that loads user language from database/cache
@@ -146,6 +165,8 @@ func SetUserLangLoader(loader func(userId int) string) {
 
 // StatedLang returns the language the reader of a request stated, or "" when
 // there is none. It checks multiple sources in priority order:
+// 0. The interface language the web console declares (X-UI-Language) — this is
+//    what the user actually sees, so it outranks everything else on /api/.
 // 1. User settings (ContextKeyUserSetting) - if already loaded (e.g., by TokenAuth)
 // 2. Lazy load user language from cache/DB using user ID, when step 1 found no settings
 // 3. Language set by middleware (ContextKeyLanguage) - from Accept-Language header
@@ -155,6 +176,46 @@ func StatedLang(c *gin.Context) string {
 		return ""
 	}
 
+	// 0. 控制台声明的界面语言优先：用户把页面切成 English，提示就该是英文，
+	// 哪怕账户里存的是中文、浏览器报的也是中文。
+	if lang := consoleStatedLang(c); lang != "" {
+		return lang
+	}
+
+	return preferenceLang(c)
+}
+
+// StatedPreferenceLang is StatedLang without the console override. Content sent
+// outside the page the reader is looking at (email, in-site notice) must follow
+// the account preference: switching the console to English for a minute should
+// not start sending English mail to a Chinese operator.
+func StatedPreferenceLang(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return preferenceLang(c)
+}
+
+// consoleStatedLang returns the language the web console declares, or "".
+func consoleStatedLang(c *gin.Context) string {
+	if c.Request == nil || c.Request.URL == nil {
+		return ""
+	}
+	// 只认控制台接口，避免第三方客户端用这个头改协议错误的语言。
+	if !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		return ""
+	}
+	raw := strings.TrimSpace(c.GetHeader(ConsoleLanguageHeader))
+	if raw == "" {
+		return ""
+	}
+	// normalizeLang 对不支持的语言（fr/ru/ja/vi）落到 DefaultLang，服务端
+	// 文本退英文即可——控制台自己会用 message_key 渲染那些语言。
+	return normalizeLang(raw)
+}
+
+// preferenceLang resolves the language from stored settings and request headers.
+func preferenceLang(c *gin.Context) string {
 	// 1. Try to get language from user settings (if already loaded by TokenAuth or other middleware)
 	userSetting, settingLoaded := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if settingLoaded && userSetting.Language != "" {

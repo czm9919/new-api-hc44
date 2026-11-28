@@ -262,11 +262,7 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "TelegramOAuthEnabled":
 		if option.Value == "true" && !system_setting.GetTelegramSettings().IsConfigured() {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"code":    "TELEGRAM_OAUTH_NOT_CONFIGURED",
-				"message": "Telegram OAuth is not configured or enabled. Please contact your administrator.",
-			})
+			common.ApiErrorMsgStatus(c, http.StatusOK, "Telegram OAuth is not configured or enabled. Please contact your administrator.", gin.H{"code": "TELEGRAM_OAUTH_NOT_CONFIGURED"})
 			return
 		}
 	case "theme.frontend":

@@ -66,7 +66,7 @@ func ListSystemTasks(c *gin.Context) {
 		Limit  int `form:"limit"`
 	}
 	if err := c.ShouldBindQuery(&query); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid system task filters"})
+		common.ApiErrorMsgStatus(c, http.StatusBadRequest, "invalid system task filters")
 		return
 	}
 
@@ -92,7 +92,7 @@ func ListSystemTasks(c *gin.Context) {
 func DeleteSystemTaskHistory(c *gin.Context) {
 	var filter model.SystemTaskFilter
 	if err := c.ShouldBindQuery(&filter); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid system task filters"})
+		common.ApiErrorMsgStatus(c, http.StatusBadRequest, "invalid system task filters")
 		return
 	}
 	deleted, err := model.DeleteSystemTaskHistory(filter)

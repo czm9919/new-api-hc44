@@ -70,15 +70,15 @@ func fetchCodexChannelWhamData(
 		return
 	}
 	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+		common.ApiErrorMsg(c, "channel not found")
 		return
 	}
 	if ch.Type != constant.ChannelTypeCodex {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
+		common.ApiErrorMsg(c, "channel type is not Codex")
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		common.ApiErrorMsg(c, "multi-key channel is not supported")
 		return
 	}
 
@@ -91,11 +91,11 @@ func fetchCodexChannelWhamData(
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: access_token is required"})
+		common.ApiErrorMsg(c, "codex channel: access_token is required")
 		return
 	}
 	if accountID == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: account_id is required"})
+		common.ApiErrorMsg(c, "codex channel: account_id is required")
 		return
 	}
 

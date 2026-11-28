@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -151,11 +152,25 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 // clients can back off instead of treating the rejection as a fatal error.
 // The in-memory limiter cannot report the remaining window, so callers
 // without a TTL pass the full window duration as a conservative upper bound.
+// Console requests get a JSON body with a translatable message: an empty 429
+// otherwise shows up in the UI as axios's raw "Request failed with status
+// code 429", which is neither localized nor actionable. Protocol paths (/v1
+// and friends) keep the bare status so OpenAI-compatible clients only see it.
 func writeRateLimited(c *gin.Context, retryAfterSeconds int64) {
 	if retryAfterSeconds > 0 {
 		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 	}
-	c.Status(http.StatusTooManyRequests)
+	if c.Request != nil && c.Request.URL != nil &&
+		strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		const tooManyRequests = "Too many requests. Please try again later."
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"success":     false,
+			"message":     common.LocalizeRawText(c, tooManyRequests),
+			"message_key": tooManyRequests,
+		})
+	} else {
+		c.Status(http.StatusTooManyRequests)
+	}
 	c.Abort()
 }
 

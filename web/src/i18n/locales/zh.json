@@ -8340,6 +8340,7 @@
     "Preview and select metadata changes before applying": "请先预览并选择要应用的元数据变更",
     "Selected upstream model is no longer available": "选中的上游模型已不存在",
     "Upstream metadata changed; preview again": "上游元数据已变更，请重新预览",
-    "invalid id": "ID 无效"
+    "invalid id": "ID 无效",
+    "Too many requests. Please try again later.": "请求过于频繁，请稍后再试。"
   }
 }

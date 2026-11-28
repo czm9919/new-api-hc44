@@ -25,10 +25,6 @@ func AdminIpWhitelist() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"code":    "ADMIN_IP_FORBIDDEN",
-			"message": "request source address is not in the admin IP whitelist",
-		})
+		common.ApiErrorMsgStatus(c, http.StatusForbidden, "request source address is not in the admin IP whitelist", gin.H{"code": "ADMIN_IP_FORBIDDEN"})
 	}
 }

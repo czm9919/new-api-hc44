@@ -149,11 +149,7 @@ func AdminAuth() func(c *gin.Context) {
 		// 白名单时，来源不符的请求在鉴权阶段就被拒掉，不进入后续逻辑。
 		if networks := common.ParseCIDRList(common.AdminIpWhitelist); len(networks) > 0 {
 			if !common.IPInNetworks(c.ClientIP(), networks) {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"success": false,
-					"code":    "ADMIN_IP_FORBIDDEN",
-					"message": "request source address is not in the admin IP whitelist",
-				})
+				common.ApiErrorMsgStatus(c, http.StatusForbidden, "request source address is not in the admin IP whitelist", gin.H{"code": "ADMIN_IP_FORBIDDEN"})
 				return
 			}
 		}
@@ -166,11 +162,7 @@ func RootAuth() func(c *gin.Context) {
 		// 与 AdminAuth 相同的白名单检查：Root 是最高危入口，一并收口。
 		if networks := common.ParseCIDRList(common.AdminIpWhitelist); len(networks) > 0 {
 			if !common.IPInNetworks(c.ClientIP(), networks) {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"success": false,
-					"code":    "ADMIN_IP_FORBIDDEN",
-					"message": "request source address is not in the admin IP whitelist",
-				})
+				common.ApiErrorMsgStatus(c, http.StatusForbidden, "request source address is not in the admin IP whitelist", gin.H{"code": "ADMIN_IP_FORBIDDEN"})
 				return
 			}
 		}

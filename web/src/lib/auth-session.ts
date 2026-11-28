@@ -22,6 +22,7 @@ import { t } from 'i18next'
 
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import { hasSessionHint } from '@/lib/session-hint'
+import { currentUiLanguage, UI_LANGUAGE_HEADER } from '@/lib/ui-language'
 import {
   useAuthStore,
   type AuthBootstrapState,
@@ -74,6 +75,13 @@ const authClient = axios.create({
     // no-store forbids storage; no-cache also revalidates any older cached response.
     'Cache-Control': 'no-cache, no-store',
   },
+})
+
+authClient.interceptors.request.use((config) => {
+  // 会话续期/登录接口也按界面语言返回提示，和主客户端保持一致。
+  const language = currentUiLanguage()
+  if (language) config.headers.set(UI_LANGUAGE_HEADER, language)
+  return config
 })
 
 const refreshRaceDelays = [80, 200, 500] as const

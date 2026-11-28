@@ -30,6 +30,7 @@ import {
   getServerErrorMessage,
   safeServerErrorMessage,
 } from '@/lib/server-error-message'
+import { currentUiLanguage, UI_LANGUAGE_HEADER } from '@/lib/ui-language'
 import { useAuthStore } from '@/stores/auth-store'
 
 declare module 'axios' {
@@ -145,6 +146,10 @@ api.interceptors.response.use(
 )
 
 api.interceptors.request.use(async (config) => {
+  // 先把当前界面语言带上：服务端用它渲染 message，切语言后提示立刻跟着变。
+  const language = currentUiLanguage()
+  if (language) config.headers.set(UI_LANGUAGE_HEADER, language)
+
   if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
     // Refresh before spending a proof/flow, never by replaying its request.
     config.skipAuthRefresh = true

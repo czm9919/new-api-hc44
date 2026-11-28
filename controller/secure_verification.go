@@ -148,7 +148,7 @@ func requireAdminUserProof(c *gin.Context, scope string, context any) *model.Aut
 	payload, err := common.Marshal(context)
 	if err != nil {
 		_ = c.Error(err)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"success": false, "code": "AUTH_INTERNAL_ERROR", "message": "Please try again later."})
+		common.ApiErrorMsgStatus(c, http.StatusInternalServerError, "Please try again later.", gin.H{"code": "AUTH_INTERNAL_ERROR"})
 		return nil
 	}
 	return middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: scope, Context: payload})

@@ -68,13 +68,13 @@ func marshalTopUpSnapshot(orders []*model.TopUp) string {
 func StreamTopUpStatus(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId <= 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "unauthorized"})
+		common.ApiErrorMsgStatus(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		// 不允许降级成一次性响应：前端拿到 200 却不是流会误以为连接正常。
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "streaming is not supported"})
+		common.ApiErrorMsgStatus(c, http.StatusInternalServerError, "streaming is not supported")
 		return
 	}
 

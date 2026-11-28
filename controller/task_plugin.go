@@ -632,7 +632,7 @@ func DeleteTaskPluginVersion(c *gin.Context) {
 			return
 		}
 		if (len(channels) > 0 || inFlight > 0) && c.Query("force") != "true" {
-			c.JSON(200, gin.H{"success": false, "message": "task plugin is still in use", "data": gin.H{"channels": channels, "in_flight_count": inFlight}})
+			common.ApiErrorMsgStatus(c, 200, "task plugin is still in use", gin.H{"data": gin.H{"channels": channels, "in_flight_count": inFlight}})
 			return
 		}
 	}
@@ -726,7 +726,7 @@ func SetTaskPluginStatus(c *gin.Context) {
 		cascade := c.Query("cascade") == "true"
 		force := c.Query("force") == "true"
 		if (len(channels) > 0 && !cascade) || (inFlight > 0 && !force) {
-			c.JSON(200, gin.H{"success": false, "message": "task plugin is still in use", "data": gin.H{"channels": channels, "in_flight_count": inFlight}})
+			common.ApiErrorMsgStatus(c, 200, "task plugin is still in use", gin.H{"data": gin.H{"channels": channels, "in_flight_count": inFlight}})
 			return
 		}
 		if cascade {

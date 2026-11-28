@@ -72,7 +72,7 @@ func RequireSecurityProof(c *gin.Context, operation service.VerificationOperatio
 			securityProofError(c, "SECURITY_PROOF_INVALID", "Security verification is no longer valid. Please verify again.")
 		default:
 			_ = c.Error(err)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"success": false, "code": "AUTH_INTERNAL_ERROR", "message": "Please try again later."})
+			common.ApiErrorMsgStatus(c, http.StatusInternalServerError, "Please try again later.", gin.H{"code": "AUTH_INTERNAL_ERROR"})
 		}
 		return nil
 	}

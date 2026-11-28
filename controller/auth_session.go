@@ -114,7 +114,7 @@ func DeleteLoginSession(c *gin.Context) {
 	}
 	sid := strings.TrimSpace(c.Param("sid"))
 	if sid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "AUTH_SESSION_ID_REQUIRED", "message": "session id is required"})
+		common.ApiErrorMsgStatus(c, http.StatusBadRequest, "session id is required", gin.H{"code": "AUTH_SESSION_ID_REQUIRED"})
 		return
 	}
 	revoked, err := model.RevokeUserSession(identity.UserID, sid, "user_revoked")
@@ -123,7 +123,7 @@ func DeleteLoginSession(c *gin.Context) {
 		return
 	}
 	if !revoked {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "session not found"})
+		common.ApiErrorMsgStatus(c, http.StatusNotFound, "session not found", gin.H{"code": "AUTH_SESSION_NOT_FOUND"})
 		return
 	}
 	if rawRefreshToken, hasCookie := service.ReadRefreshCookie(c); hasCookie {
@@ -151,11 +151,7 @@ func RevokeOtherLoginSessions(c *gin.Context) {
 func requireBrowserSession(c *gin.Context) (service.AuthIdentity, bool) {
 	identity, ok := middleware.GetSessionAuthIdentity(c)
 	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"code":    "AUTH_SESSION_REQUIRED",
-			"message": "a dashboard login session is required",
-		})
+		common.ApiErrorMsgStatus(c, http.StatusForbidden, "a dashboard login session is required", gin.H{"code": "AUTH_SESSION_REQUIRED"})
 		return service.AuthIdentity{}, false
 	}
 	return identity, true

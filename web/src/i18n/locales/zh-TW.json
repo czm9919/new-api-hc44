@@ -7930,6 +7930,7 @@
     "Preview and select metadata changes before applying": "請先預覽並選擇要套用的中繼資料變更",
     "Selected upstream model is no longer available": "選取的上游模型已不存在",
     "Upstream metadata changed; preview again": "上游中繼資料已變更，請重新預覽",
-    "invalid id": "ID 無效"
+    "invalid id": "ID 無效",
+    "Too many requests. Please try again later.": "請求過於頻繁，請稍後再試。"
   }
 }

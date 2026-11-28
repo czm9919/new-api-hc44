@@ -219,3 +219,88 @@ func TestServerLogLanguage(t *testing.T) {
 	common.SetLogLanguage("en")
 	assert.Equal(t, "channel #7 has 2 unfinished tasks", common.LogText(line, 7, 2))
 }
+
+// Messages the handlers hand over as plain English text (ApiErrorMsg) must be
+// rendered like any other console message and carry their key, so the web
+// console can show them in the language the reader switched to.
+func TestApiErrorMsgFollowsReaderLanguage(t *testing.T) {
+	require.NoError(t, Init())
+	for _, tc := range []struct {
+		name   string
+		msg    string
+		header string
+		want   string
+	}{
+		{
+			name:   "known text zh",
+			msg:    "no permission",
+			header: "zh-CN",
+			want:   `{"success":false,"message":"无权限","message_key":"no permission"}`,
+		},
+		{
+			name:   "known text en",
+			msg:    "no permission",
+			header: "en",
+			want:   `{"success":false,"message":"no permission","message_key":"no permission"}`,
+		},
+		{
+			name:   "dynamic detail keeps its wording",
+			msg:    "upstream said: 502 bad gateway",
+			header: "zh-CN",
+			want:   `{"success":false,"message":"upstream said: 502 bad gateway"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest("GET", "/api/channel", nil)
+			c.Request.Header.Set(ConsoleLanguageHeader, tc.header)
+			common.ApiErrorMsg(c, tc.msg)
+			assert.JSONEq(t, tc.want, recorder.Body.String())
+		})
+	}
+}
+
+// The console's current interface language outranks the language saved in the
+// account: switching the page must switch the hints immediately.
+func TestConsoleLanguageHeaderOutranksUserSetting(t *testing.T) {
+	require.NoError(t, Init())
+	newContext := func(path string) (*gin.Context, *httptest.ResponseRecorder) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest("GET", path, nil)
+		c.Request.Header.Set("Accept-Language", "zh-CN")
+		common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: "zhCN"})
+		return c, recorder
+	}
+
+	c, _ := newContext("/api/channel")
+	c.Request.Header.Set(ConsoleLanguageHeader, "en")
+	assert.Equal(t, LangEn, StatedLang(c))
+
+	c, _ = newContext("/api/channel")
+	c.Request.Header.Set(ConsoleLanguageHeader, "zhTW")
+	assert.Equal(t, LangZhTW, StatedLang(c))
+
+	// Without the header the saved preference still decides.
+	c, _ = newContext("/api/channel")
+	assert.Equal(t, LangZhCN, StatedLang(c))
+
+	// Protocol paths ignore the console header: OpenAI-compatible clients get
+	// their errors in the language they asked for, not the one a browser claims.
+	c, _ = newContext("/v1/chat/completions")
+	c.Request.Header.Set(ConsoleLanguageHeader, "en")
+	assert.Equal(t, LangZhCN, StatedLang(c))
+}
+
+// Mail follows the account preference, never the page the operator happens to
+// be looking at.
+func TestStatedPreferenceLangIgnoresConsoleHeader(t *testing.T) {
+	require.NoError(t, Init())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/api/user/login", nil)
+	c.Request.Header.Set(ConsoleLanguageHeader, "en")
+	common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: "zhCN"})
+	assert.Equal(t, LangZhCN, StatedPreferenceLang(c))
+}

@@ -41,11 +41,7 @@ func CSRFOriginCheck() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"code":    "CSRF_ORIGIN_FORBIDDEN",
-			"message": "request origin is not allowed for this endpoint",
-		})
+		common.ApiErrorMsgStatus(c, http.StatusForbidden, "request origin is not allowed for this endpoint", gin.H{"code": "CSRF_ORIGIN_FORBIDDEN"})
 	}
 }
 

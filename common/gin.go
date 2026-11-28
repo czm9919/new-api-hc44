@@ -345,11 +345,70 @@ func ApiSuccessT(c *gin.Context, key string, data any, params ...map[string]any)
 	c.JSON(http.StatusOK, body)
 }
 
+// ApiErrorMsg responds with a plain message. The text is the English source
+// wording; when the console dictionaries know it, the response also carries
+// message_key so the web console can re-render it in whatever language the
+// reader switched the page to. Unknown text (upstream errors, dynamic detail)
+// is passed through untouched — the key is only emitted for a real translation
+// so a message containing "{{...}}" is never mistaken for a template.
 func ApiErrorMsg(c *gin.Context, msg string) {
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"success": false,
 		"message": msg,
-	})
+	}
+	if text, key := localizeRawMessage(c, msg); key != "" {
+		body["message"] = text
+		body["message_key"] = key
+	}
+	c.JSON(http.StatusOK, body)
+}
+
+// ApiErrorMsgStatus is ApiErrorMsg with an explicit HTTP status and extra
+// fields (a stable error code, data, ...). It aborts the handler chain, so a
+// middleware can use it in place of c.AbortWithStatusJSON.
+func ApiErrorMsgStatus(c *gin.Context, status int, msg string, fields ...gin.H) {
+	body := gin.H{
+		"success": false,
+		"message": msg,
+	}
+	if text, key := localizeRawMessage(c, msg); key != "" {
+		body["message"] = text
+		body["message_key"] = key
+	}
+	for _, extra := range fields {
+		maps.Copy(body, extra)
+	}
+	c.AbortWithStatusJSON(status, body)
+}
+
+// LocalizeRawText renders a hand-written English message in the language the
+// console reader stated. Callers that build their own response body (rate
+// limiters, abort helpers) use it instead of the ApiErrorMsg helpers.
+func LocalizeRawText(c *gin.Context, msg string) string {
+	text, _ := localizeRawMessage(c, msg)
+	return text
+}
+
+// localizeRawMessage translates a hand-written English message for console
+// readers. It reports the key separately so callers can omit it when the
+// dictionaries have no entry.
+func localizeRawMessage(c *gin.Context, msg string) (string, string) {
+	if msg == "" || c == nil || c.Request == nil || c.Request.URL == nil {
+		return msg, ""
+	}
+	if !strings.HasPrefix(c.Request.URL.Path, "/api/") || TranslateMessage == nil {
+		return msg, ""
+	}
+	text := TranslateMessage(c, msg)
+	if text != "" && text != msg {
+		return text, msg
+	}
+	// 英文读者的译文就是原文，但键仍然有效——控制台换到别的语言时还要靠它
+	// 重新渲染，所以这里单独判一次词典里到底有没有这条。
+	if HasMessageKey != nil && HasMessageKey(msg) {
+		return msg, msg
+	}
+	return msg, ""
 }
 
 func ApiSuccess(c *gin.Context, data any) {
@@ -385,11 +444,14 @@ func ApiSuccessI18n(c *gin.Context, key string, data any, args ...map[string]any
 // The actual implementation will be set during init
 var TranslateMessage func(c *gin.Context, key string, args ...map[string]any) string
 
+// HasMessageKey reports whether the dictionaries know a message key. It is set
+// by i18n.Init together with TranslateMessage.
+var HasMessageKey func(key string) bool
+
 func init() {
 	// Default implementation that returns the key as-is
 	// This will be replaced by i18n.T during i18n initialization
 	TranslateMessage = func(c *gin.Context, key string, args ...map[string]any) string {
-		c.Header("X-Translate-id", "d5e7afdfc7f03414b941f9c1e7096be9966510e7")
 		return key
 	}
 }
