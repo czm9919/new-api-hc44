@@ -417,7 +417,8 @@ export function FloatingWindow(props: FloatingWindowProps) {
         ...style,
         width: state.size.width,
         height: state.size.height,
-        maxHeight: `calc(100vh - ${VIEWPORT_MARGIN * 2}px)`,
+        // dvh 跟随移动浏览器工具栏收放；100vh 会把工具栏算进去，窗口底部被裁。
+        maxHeight: `calc(100dvh - ${VIEWPORT_MARGIN * 2}px)`,
       }}
       className={cn(
         'bg-background border-border z-50 flex flex-col overflow-hidden rounded-xl border shadow-xl',

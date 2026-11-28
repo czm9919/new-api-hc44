@@ -122,11 +122,10 @@ For commercial licensing, please contact support@quantumnous.com
     overflow: unset !important;
   }
 
-  /* 添加到主屏（standalone）后底部没有浏览器工具栏兜底，home indicator
-   * 会压住页面最后一行。普通浏览器里 env() 解析为 0，不产生额外留白。 */
-  body {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
+  /* 底部安全区不放在 body 上：登录后布局的子元素已经是 100svh 固定高，
+   * 给 body 补 padding 会让文档比视口高出 exactly 一个安全区，整页能多滚
+   * 一截（露出背景）。改为让安全区参与布局高度计算（--app-safe-bottom，
+   * 见 theme.css），公开页在 PublicLayout 根容器上补 padding。 */
 
   /* Cursor pointer for buttons */
   button:not(:disabled),

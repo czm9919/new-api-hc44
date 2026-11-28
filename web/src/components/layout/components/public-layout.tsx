@@ -33,8 +33,11 @@ type PublicLayoutProps = {
 }
 
 export function PublicLayout(props: PublicLayoutProps) {
+  // 顶栏是 fixed（不占位），刘海屏下内容要从状态栏下沿开始，否则首页 hero
+  // 和定价页首屏会被顶栏压掉一截。fixed 子元素不受父级 padding 影响，
+  // 顶栏自己也让了同样高度（public-header 的 pt），两者保持原有相对位置。
   return (
-    <div className='bg-background text-foreground relative min-h-svh overflow-x-clip'>
+    <div className='bg-background text-foreground relative min-h-svh overflow-x-clip pt-[env(safe-area-inset-top,0px)] pb-[var(--app-safe-bottom,0px)]'>
       <PublicHeader
         navContent={props.navContent}
         navLinks={props.navLinks}

@@ -22,7 +22,11 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- 默认 default（状态栏不透明、文字自动反色，浅色主题下也看得清）。
+         深色主题由下面的内联脚本改成 black-translucent 做沉浸。
+         black-translucent 会把状态栏文字固定成白色并让页面延伸到状态栏
+         下方，浅色背景下时间和电量等于隐身，不能写死。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="format-detection" content="telephone=no" />
 
     <meta
@@ -50,6 +54,18 @@
             : 'light'
         }
         document.documentElement.classList.add(theme)
+
+        // iOS 主屏启动时读的就是这一刻的 meta：深色用沉浸式状态栏，
+        // 浅色退回 default，避免白色状态栏文字压在白底上。
+        var bar = document.querySelector(
+          'meta[name="apple-mobile-web-app-status-bar-style"]'
+        )
+        if (bar) {
+          bar.setAttribute(
+            'content',
+            theme === 'dark' ? 'black-translucent' : 'default'
+          )
+        }
       })()
     </script>
     <!--umami-->

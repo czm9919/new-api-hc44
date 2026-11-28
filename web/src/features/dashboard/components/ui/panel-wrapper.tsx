@@ -90,6 +90,9 @@ export function PanelWrapper(props: PanelWrapperProps) {
         <div
           className={cn(
             'text-muted-foreground flex items-center justify-center px-4 text-sm',
+            // 手机上不保留固定高度：空状态撑满 288px 会把首屏吃掉一大半，
+            // 桌面保持原高度以维持卡片等高对齐。
+            'max-sm:h-auto! max-sm:min-h-20 max-sm:py-6',
             height,
             props.contentClassName
           )}

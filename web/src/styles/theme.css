@@ -102,6 +102,10 @@ For commercial licensing, please contact support@quantumnous.com
    * 状态栏下方，不把安全区算进高度就会压住标题。env() 在非刘海设备上
    * 解析为 0px，等价于原来的 3rem。 */
   --app-header-height: calc(3rem + env(safe-area-inset-top, 0px));
+  /* 底部 home indicator 高度。登录后布局用它参与高度计算（100svh 减去
+   * 顶栏与它），这样既不会遮住最后一行，也不会让整页多出一截可滚动区。
+   * 普通浏览器里解析为 0px。 */
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
   /* Static build-channel fallback consumed when JS hasn't booted yet. */
   --app-rev: '2k6e8r7p';
   /* Auto starts with the browser font, including before JS applies the

@@ -68,7 +68,9 @@ function UrlRow({
     <div className='space-y-1'>
       <div className='text-muted-foreground text-xs font-medium'>{label}</div>
       <div className='flex flex-wrap items-center gap-2'>
-        <code className='bg-muted max-w-full overflow-x-auto rounded px-2 py-1 text-sm'>
+        {/* 手机宽度下地址必然超过一行：让它换行而不是横向滚动，
+            否则用户得左右拖才能看全域名。 */}
+        <code className='bg-muted max-w-full min-w-0 rounded px-2 py-1 text-sm break-all'>
           {maskedBaseUrl(value)}
         </code>
         <Button
